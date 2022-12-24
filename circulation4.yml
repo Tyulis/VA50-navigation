@@ -1,0 +1,76 @@
+node:
+  node-name: trajectory
+  image-topic: /forwardCamera/image_raw
+  camerainfo-topic: /forwardCamera/camera_info
+  velocity-topic: /ZOE2UTBM/car/velocity
+  trajectory-topic: /navigation/trajectory
+  transform-node-name: transform_batch_server
+  transform-service-name: /circulation/TransformBatch
+  drop-service-name: /circulation/DropVelocity
+  road-frame: base_link
+  visualize: true
+
+environment:
+  lane-width: 3.5
+  crosswalk-width: 0.5
+
+birdeye:
+  x-range: 15
+  y-range: 16
+  roi-y: 3.85
+  birdeye-size: 500
+
+preprocess:
+  threshold-window: 33
+  threshold-bias: -5
+  open-kernel-size: 5
+  close-kernel-size: 10
+
+markings:
+  size-tolerance: 0.20
+
+trajectory:
+  history-size: 15
+
+  line-reliability-range: 22
+  line-reliability-dampening: 3
+  line-reliability-extension-penalty: 1.8
+
+  trajectory-step: 0.5
+  trajectory-range: 15
+  trajectory-start: 3.85
+  line-score-threshold: 0.65
+  trajectory-score-threshold: 0.70
+
+find-lines-parameters:
+  savgol_degree: 2
+  initial_filter_window: 35
+  smoothing_filter_window: 9
+  branch_step: 5
+  min_branch_length: 8
+  min_line_length: 35
+  max_curvature_metric: 1
+  curvature_filter_size: 9
+  curvature_filter_deviation: 1
+  merge_max_distance: 140
+  angle_diff_threshold: 0.26
+  merge_score_threshold: 45
+
+fuzzy-lines:
+  base-score: 4
+  centers:
+    forward-distance: [3.85, 5.5, 10]
+    line-distance: [0, 1.5, 4]
+    line-lengths: [10, 5, 0.0]
+    parallel-distances: [0, 0.3, 1]
+    parallel-angles: [0, 0.39, 1.05]
+    output: [0, 0.25, 0.5, 0.75, 1]
+  malus:
+    forward-distance: [0, -1, -4]
+    line-distance: [0, -2, -3]
+    line-lengths: [0, -1, -2]
+    parallel-distances: [0, -2, -5]
+    parallel-angles: [0, -2, -5]
+  lane-selection-threshold: 0.7
+  single-line-selection-threshold: 0.6
+  vertical-angle-tolerance: 0.7

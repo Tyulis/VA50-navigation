@@ -1,0 +1,6 @@
+numpy>=1.19.5
+scikit-learn>=0.24.2
+PyYAML>=3.12
+opencv-contrib-python>=4.6.0.66
+Cython>=0.29.32
+transforms3d>=0.4.1

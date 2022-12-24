@@ -1,0 +1,88 @@
+node:
+  node-name: trajectory
+  image-topic: /forwardCamera/image_raw
+  camerainfo-topic: /forwardCamera/camera_info
+  velocity-topic: /ZOE2UTBM/car/velocity
+  trajectory-topic: /navigation/trajectory
+  direction-topic: /navigation/direction
+  transform-node-name: transform_batch_server
+  transform-service-name: /circulation/TransformBatch
+  drop-service-name: /circulation/DropVelocity
+  road-frame: base_link
+  world-frame: map
+  visualize: true
+  time-discrepancy: false
+
+environment:
+  lane-width: 3.5
+  crosswalk-width: 0.5
+
+birdeye:
+  x-range: 15
+  y-range: 26
+  roi-y: 9
+  birdeye-size: 500
+
+preprocess:
+  threshold-window: 33
+  threshold-bias: -5
+  open-kernel-size: 4
+  close-kernel-size: 5
+
+markings:
+  size-tolerance: 0.20
+
+intersection:
+  mode-switch-distance: 0
+  default-rejoin-distance: 14
+  rejoin-distance-supplement: 4
+  min-turn-radius: 5
+  max-turn-radius: 25
+
+trajectory:
+  history-size: 15
+
+  line-reliability-range: 22
+  line-reliability-dampening: 3
+  line-reliability-extension-penalty: 1.8
+
+  trajectory-step: 0.5
+  trajectory-range: 15
+  trajectory-start: 0
+  line-score-threshold: 0.5
+  trajectory-score-threshold: 0.5
+
+find-lines-parameters:
+  savgol_degree: 2
+  initial_filter_window: 35
+  smoothing_filter_window: 9
+  branch_step: 5
+  min_branch_length: 8
+  min_line_length: 35
+  max_curvature_metric: 1
+  curvature_filter_size: 9
+  curvature_filter_deviation: 1
+  merge_max_distance: 140
+  angle_diff_threshold: 0.31
+  merge_score_threshold: 1
+
+fuzzy-lines:
+  local-area-x: 10
+  local-area-y: 15
+  base-score: 4
+  centers:
+    forward-distance: [9, 11, 20]
+    line-distance: [0, 0.75, 2]
+    line-lengths: [8, 4, 0.0]
+    parallel-distances: [0, 0.3, 1]
+    parallel-angles: [0, 0.51, 1.24]
+    output: [0, 0.25, 0.5, 0.8, 1]
+  malus:
+    forward-distance: [0, -1, -4]
+    line-distance: [0, -2, -3]
+    line-lengths: [0, -1, -2]
+    parallel-distances: [0, -2, -5]
+    parallel-angles: [0, -2, -5]
+  lane-selection-threshold: 0.7
+  single-line-selection-threshold: 0.6
+  vertical-angle-tolerance: 0.5
