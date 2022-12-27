@@ -124,9 +124,9 @@ class PurePursuitController (object):
             current_trajectory_data_2d = current_trajectory_data_3d[:,:2]
             current_trajectory_data_2d[:,0] = current_trajectory_data_2d[:,0] * -1
 
-            self.target_course = TargetCourse(current_trajectory_data_2d[:,1], current_trajectory_data_2d[:,0])
+            self.target_course = TargetCourse(current_trajectory_data_2d[:,1], current_trajectory_data_2d[:,0], parameters=self.parameters)
 
-            self.state = State()
+            self.state = State(parameters=self.parameters)
             self.state.update(self.real_speed, self.real_angular_speed)
             self.target_ind, _ = self.target_course.search_target_index(self.state)
 
@@ -233,7 +233,14 @@ class PurePursuitController (object):
 
 class State:
 
-    def __init__(self, x=0.0, y=0.0, yaw=0.0, v=0.0):
+    def __init__(self, parameters, x=0.0, y=0.0, yaw=0.0, v=0.0):
+        # Parameters
+        self.k = parameters["control"]["k"]  # look forward gain
+        self.Lfc = parameters["control"]["Lfc"]  # [m] look-ahead distance
+        self.Kp = parameters["control"]["Kp"]  # speed proportional gain
+        self.dt = parameters["control"]["dt"]  # [s] time tick
+        self.WB = parameters["control"]["WB"]  # [m] wheel base of vehicle
+
         self.x = x
         self.y = y
         self.yaw = yaw
@@ -271,7 +278,11 @@ class States:
 
 class TargetCourse:
 
-    def __init__(self, cx, cy):
+    def __init__(self, cx, cy, parameters):
+        # Parameters
+        self.k = parameters["control"]["k"]  # look forward gain
+        self.Lfc = parameters["control"]["Lfc"]  # [m] look-ahead distance
+
         self.cx = cx
         self.cy = cy
         self.old_nearest_point_index = None
