@@ -100,7 +100,7 @@ class PurePursuitController (object):
         velocity_x = velocity_msg.linear.x
         velocity_y = velocity_msg.linear.y
         self.real_speed = np.linalg.norm([velocity_x, velocity_y])
-        self.real_angular_speed = velocity_msg.angular.z * -1
+        self.real_angular_speed = velocity_msg.angular.z
 
 
     def callback_trajectory(self, data):
@@ -122,7 +122,6 @@ class PurePursuitController (object):
             current_trajectory_data_3d = transform @ trajectory_data_3d.T
             current_trajectory_data_3d = current_trajectory_data_3d.T
             current_trajectory_data_2d = current_trajectory_data_3d[:,:2]
-            current_trajectory_data_2d[:,0] = current_trajectory_data_2d[:,0] * -1
 
             self.target_course = TargetCourse(current_trajectory_data_2d[:,1], current_trajectory_data_2d[:,0], parameters=self.parameters)
 
@@ -165,7 +164,7 @@ class PurePursuitController (object):
     def publish_control_inputs(self):
 
         if self.is_trajectory_ready:
-            if self.target_ind >= len(self.target_course.cx)-2 :
+            if self.target_ind >= len(self.target_course.cx)-1 :
                 self.speed_publisher.publish(0)  # Stop the vehicule
             else:
                 # Calc control input
@@ -173,7 +172,7 @@ class PurePursuitController (object):
                 di, self.target_ind = self.pure_pursuit_steer_control(self.target_ind)
 
                 self.speed_publisher.publish(vi)  # Control speed
-                self.steering_angle_publisher.publish(-di*180/math.pi) # Control steering angle
+                self.steering_angle_publisher.publish(di*180/math.pi) # Control steering angle
 
                 self.state.update(self.real_speed, self.real_angular_speed)
 

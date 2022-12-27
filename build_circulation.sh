@@ -14,6 +14,14 @@ if [[ $1 == init ]] || [[ $2 == init ]] || [[ $3 == init ]]; then
 	rosdep install --from-paths src --ignore-src -y -r
 fi
 
+if [[ $1 == build ]] || [[ $2 == build ]] || [[ $3 == build ]]; then
+	if [ `rosversion -d` == melodic ]; then
+		catkin build -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so
+	else
+		catkin build
+	fi
+fi
+
 if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cd src/circulation/scripts
 	cythonize -3 -a -i trajeometry.pyx
@@ -24,15 +32,14 @@ if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cythonize -3 -a -i trajectorybuild.pyx
 	cd ../../..
 
+	cp src/circulation/scripts/trajeometry*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/fish2bird*.so devel/lib/python3/dist-packages/
-fi
-
-if [[ $1 == build ]] || [[ $2 == build ]] || [[ $3 == build ]]; then
-	if [ `rosversion -d` == melodic ]; then
-		catkin build -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so
-	else
-		catkin build
-	fi
+	cp src/circulation/scripts/linetrack*.so devel/lib/python3/dist-packages/
+	cp src/circulation/scripts/fuzzylines*.so devel/lib/python3/dist-packages/
+	cp src/circulation/scripts/positioning*.so devel/lib/python3/dist-packages/
+	cp src/circulation/scripts/trajectorybuild*.so devel/lib/python3/dist-packages/
+	cp src/circulation/scripts/roadnet.py devel/lib/python3/dist-packages/
+	cp src/trafficsigns/scripts/traffic_sign_detection.py devel/lib/python3/dist-packages/
 fi
 
 if [[ $1 == pack ]] || [[ $2 == pack ]] || [[ $3 == pack ]] || [[ $4 == pack ]]; then
