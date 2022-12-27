@@ -104,13 +104,11 @@ def line_parameters(list lines, double lane_width, double main_angle, double mai
 	cdef double[2] main_point = [0, main_angle_distance], left_main_point, right_main_point
 	if main_angle < M_PI/2:  # Curving to the right
 		main_point[0] = (main_angle_distance / cos(main_angle)) * (1 - sin(main_angle))
-		left_main_point = [main_point[0] - expected_vector[1]*lane_width/2, main_point[1] + expected_vector[1]*lane_width/2]
-		right_main_point = [main_point[0] + expected_vector[1]*lane_width/2, main_point[1] - expected_vector[1]*lane_width/2]
 	elif main_angle > M_PI/2:  # Curving to the left
 		main_point[0] = (main_angle_distance / cos(main_angle)) * (sin(main_angle) - 1)
-		left_main_point = [main_point[0] + expected_vector[1]*lane_width/2, main_point[1] - expected_vector[1]*lane_width/2]
-		right_main_point = [main_point[0] - expected_vector[1]*lane_width/2, main_point[1] + expected_vector[1]*lane_width/2]
-	
+	left_main_point = [main_point[0] - expected_vector[1]*lane_width/2, main_point[1] + expected_vector[0]*lane_width/2]
+	right_main_point = [main_point[0] + expected_vector[1]*lane_width/2, main_point[1] - expected_vector[0]*lane_width/2]
+
 	# Now, calculate the parameters for each curve
 	for i in range(nlines):
 		line_view = lines[i]

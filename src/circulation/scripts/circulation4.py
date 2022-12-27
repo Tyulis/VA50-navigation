@@ -509,9 +509,10 @@ class TrajectoryExtractorNode (object):
 		
 		# Project in bird-eye view
 		# then a gaussian adaptive thresholding is applied to reduce the influence of lighting changes
-		birdeye, scale_factor = fish2bird.to_birdeye(img_blur, self.camera_to_image, target_to_camera, self.distortion_parameters[0], self.birdeye_range_x, self.birdeye_range_y, self.parameters["birdeye"]["birdeye-size"], interpolate=False, flip_y=True)
+		birdeye, scale_factor = fish2bird.to_birdeye(img_blur, self.camera_to_image, target_to_camera, self.distortion_parameters[0], self.birdeye_range_x, self.birdeye_range_y, self.parameters["birdeye"]["birdeye-size"], interpolate=True, flip_y=True)
 		be_binary = cv.adaptiveThreshold(birdeye, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, self.parameters["preprocess"]["threshold-window"], self.parameters["preprocess"]["threshold-bias"])
 
+		# The adaptive binarization makes the borders white, mask them out
 		mask = cv.erode(np.uint8(birdeye > 0), cv.getStructuringElement(cv.MORPH_RECT, (self.parameters["preprocess"]["threshold-window"]//2 + 2, self.parameters["preprocess"]["threshold-window"]//2 + 2)))
 		be_binary *= mask
 
@@ -647,7 +648,7 @@ class TrajectoryExtractorNode (object):
 		# Get the best combination and its score with the fuzzy system
 		best_y, best_x, best_score = self.lane_system.fuzzy_best(lane_variables)
 		rospy.loginfo(f"Best lane score {best_score} for combination {[best_y, best_x]}")
-
+		
 		# No good enough lane detected : fall back to single lines if so parameterized
 		if best_score < self.parameters["fuzzy-lines"]["lane-selection-threshold"]:
 			if fallback:
@@ -703,10 +704,10 @@ class TrajectoryExtractorNode (object):
 			# In that case, eliminate the bad one and continue only with the good one
 			if left_line_score < self.parameters["fuzzy-lines"]["single-line-selection-threshold"]:
 				rospy.logwarn("Found full lane but the left line’s score is too low, ditching the left line")
-				return left_line_index, None, best_score, None
+				return None, right_line_index, None, best_score
 			elif right_line_score < self.parameters["fuzzy-lines"]["single-line-selection-threshold"]:
 				rospy.logwarn("Found full lane but the right line’s score is too low, ditching the right line")
-				return None, right_line_index, None, best_score
+				return left_line_index, None, best_score, None
 			else:
 				return left_line_index, right_line_index, left_line_score, right_line_score
 	
