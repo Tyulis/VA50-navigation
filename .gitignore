@@ -144,3 +144,4 @@ src/circulation/scripts/*.c
 src/circulation/scripts/*.cpp
 src/circulation/scripts/*.ipynb
 src/geometry2/
+src/circulation/scripts/test.py

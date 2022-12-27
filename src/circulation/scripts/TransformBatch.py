@@ -3,8 +3,10 @@
 import sys
 import yaml
 import numpy as np
+import transforms3d.quaternions as quaternions
 
 import rospy
+import tf2_ros
 from std_msgs.msg import Float64MultiArray, MultiArrayDimension
 from geometry_msgs.msg import TwistStamped
 from circulation.srv import TransformBatch, TransformBatchResponse, DropVelocity, DropVelocityResponse
@@ -24,6 +26,9 @@ class TransformBatchServer(object):
 			self.time_discrepancy = None
 		else:
 			self.time_discrepancy = rospy.Duration(0)
+		
+		self.tf_buffer = tf2_ros.Buffer(rospy.Duration(120))
+		self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
 		self.velocity_subscriber = rospy.Subscriber(self.parameters["node"]["velocity-topic"], TwistStamped, self.callback_velocity, queue_size=10)
 		if self.time_discrepancy is None:
@@ -31,6 +36,32 @@ class TransformBatchServer(object):
 		else:
 			rospy.loginfo("Ready")
 	
+	def get_transform(self, source_frame, target_frame):
+		"""Get the latest transform matrix from `source_frame` to `target_frame`
+		   - source_frame : str           : Name of the source frame
+		   - target_frame : str           : Name of the target frame
+		<---------------- : ndarray[4, 4] : 3D homogeneous transform matrix to convert from `source_frame` to `target_frame`,
+		                                    or None if no TF for those frames was published
+		"""
+		try:
+			transform = self.tf_buffer.lookup_transform(target_frame, source_frame, rospy.Time(0))
+		except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+			return None
+
+		# Build the matrix elements from the translation vector and the rotation quaternion
+		rotation_message = transform.transform.rotation
+		rotation_quaternion = np.asarray((rotation_message.w, rotation_message.x, rotation_message.y, rotation_message.z))
+		rotation_matrix = quaternions.quat2mat(rotation_quaternion)
+		return rotation_matrix
+		translation_message = transform.transform.translation
+		translation_vector = np.asarray((translation_message.x, translation_message.y, translation_message.z)).reshape(3, 1)
+
+		# Build the complete transform matrix
+		return np.concatenate((
+			np.concatenate((rotation_matrix, translation_vector), axis=1),
+			np.asarray((0, 0, 0, 1)).reshape((1, 4))
+		), axis=0)
+
 	def callback_velocity(self, data):
 		if self.time_discrepancy is None:
 			self.time_discrepancy_buffer.append(rospy.get_rostime() - data.header.stamp)
@@ -55,6 +86,10 @@ class TransformBatchServer(object):
 		end_time = end_timestamp.to_sec()
 		
 		transforms = self.transform_manager.get_map_transforms(start_times, end_time)
+
+		map_transform = self.get_transform(self.parameters["node"]["world-frame"], self.parameters["node"]["road-frame"])
+		for i in range(transforms.shape[0]):
+			transforms[i, :3, 3] = map_transform @ transforms[i, :3, 3]
 
 		transform_array = Float64MultiArray()
 		transform_array.data = transforms.flatten()

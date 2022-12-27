@@ -316,9 +316,9 @@ cdef class TransformManager:
 			transforms_view[start_index, 2, 2] = cos_alpha*cos_beta
 
 			# Translation part
-			transforms_view[start_index, 0, 3] = linear_movement[start_index, 0]
-			transforms_view[start_index, 1, 3] = linear_movement[start_index, 1]
-			transforms_view[start_index, 2, 3] = linear_movement[start_index, 2]
+			transforms_view[start_index, 0, 3] = -linear_movement[start_index, 0]
+			transforms_view[start_index, 1, 3] = -linear_movement[start_index, 1]
+			transforms_view[start_index, 2, 3] = -linear_movement[start_index, 2]
 
 			# And affine part
 			transforms_view[start_index, 3, 0] = 0

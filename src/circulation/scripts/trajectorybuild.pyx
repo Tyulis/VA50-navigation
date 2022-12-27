@@ -145,7 +145,7 @@ def line_parameters(list lines, double lane_width, double main_angle, double mai
 		# Orthogonal distance to a line defined by an angle and a reference point
 		left_line_distance_view[i] = abs(expected_vector[0]*(line_view[1, initial_index] - left_main_point[1]) - expected_vector[1]*(line_view[0, initial_index] - left_main_point[0])) / lane_width
 		right_line_distance_view[i] = abs(expected_vector[0]*(line_view[1, initial_index] - right_main_point[1]) - expected_vector[1]*(line_view[0, initial_index] - right_main_point[0])) / lane_width
-		line_lengths_view[i] = trajeometry.line_length(line_view[initial_index:])
+		line_lengths_view[i] = trajeometry.line_length(line_view[:, initial_index:])
 
 	# Now that we have the individual parameters, we need to compute the pairwise parameters
 	# (parallel distance and angles)

@@ -434,10 +434,8 @@ def strip_angles(double[:, :] curve, double max_angle, double[:] scores=None):
 		left_vector[1] = curve[1, i-1] - curve[1, i]
 		right_vector[0] = curve[0, i+1] - curve[0, i]
 		right_vector[1] = curve[1, i+1] - curve[1, i]
-		left_norm = sqrt(left_vector[0]*left_vector[0] + left_vector[1]*left_vector[1])
-		right_norm = sqrt(right_vector[0]*right_vector[0] + right_vector[1]*right_vector[1])
-		angle = _acos_clip((left_vector[0]*right_vector[0] + left_vector[1]*right_vector[1]) / (left_norm * right_norm))
-		if angle < max_angle:
+		angle = vector_angle(left_vector, right_vector)
+		if angle > max_angle:
 			valid_indices.push_back(i)
 	
 	# Copy the resulting point to a fixed numpy array

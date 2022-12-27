@@ -505,17 +505,20 @@ class TrajectoryExtractorNode (object):
 		grayimage = cv.cvtColor(image, cv.COLOR_RGB2GRAY)
 
 		# Binarize the image. First a gaussian blur is applied to reduce noise,
-		# then a gaussian adaptive thresholding is applied to reduce the influence of lighting changes
 		img_blur = cv.GaussianBlur(grayimage, (7, 7), 1.5)
-		img_binary = cv.adaptiveThreshold(img_blur, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, self.parameters["preprocess"]["threshold-window"], self.parameters["preprocess"]["threshold-bias"])
 		
 		# Project in bird-eye view
-		birdeye, scale_factor = fish2bird.to_birdeye(img_binary, self.camera_to_image, target_to_camera, self.distortion_parameters[0], self.birdeye_range_x, self.birdeye_range_y, self.parameters["birdeye"]["birdeye-size"], interpolate=False, flip_y=True)
+		# then a gaussian adaptive thresholding is applied to reduce the influence of lighting changes
+		birdeye, scale_factor = fish2bird.to_birdeye(img_blur, self.camera_to_image, target_to_camera, self.distortion_parameters[0], self.birdeye_range_x, self.birdeye_range_y, self.parameters["birdeye"]["birdeye-size"], interpolate=False, flip_y=True)
+		be_binary = cv.adaptiveThreshold(birdeye, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, self.parameters["preprocess"]["threshold-window"], self.parameters["preprocess"]["threshold-bias"])
+
+		mask = cv.erode(np.uint8(birdeye > 0), cv.getStructuringElement(cv.MORPH_RECT, (self.parameters["preprocess"]["threshold-window"]//2 + 2, self.parameters["preprocess"]["threshold-window"]//2 + 2)))
+		be_binary *= mask
 
 		# Apply an opening operation to eliminate a few artifacts and better separate blurry markings
 		open_kernel_size = self.parameters["preprocess"]["open-kernel-size"]
 		open_kernel = cv.getStructuringElement(cv.MORPH_RECT, (open_kernel_size, open_kernel_size))
-		be_binary = cv.morphologyEx(birdeye, cv.MORPH_OPEN, open_kernel)
+		be_binary = cv.morphologyEx(be_binary, cv.MORPH_OPEN, open_kernel)
 
 		# Edge detection to get the 1-pixel wide continuous curves required by the following operations
 		be_binary = cv.Canny(be_binary, 50, 100)
@@ -595,7 +598,7 @@ class TrajectoryExtractorNode (object):
 		# Build the fuzzy logic base variables for each line
 		(forward_distance, left_line_distance, right_line_distance, line_lengths, parallel_distance, parallel_angles
 			) = trajectorybuild.line_parameters(target_lines, self.parameters["environment"]["lane-width"], main_angle, (self.parameters["birdeye"]["roi-y"] + self.parameters["fuzzy-lines"]["local-area-y"]) / 2, self.parameters["fuzzy-lines"]["vertical-angle-tolerance"])
-		
+
 		# Cruise mode : Detect the current lane, and fall back to a single marking if no sufficiently correct full lane is found
 		if self.navigation_mode == NavigationMode.CRUISE:
 			left_line_index, right_line_index, left_line_score, right_line_score = self.detect_full_lane(forward_distance, left_line_distance, right_line_distance, line_lengths, parallel_distance, parallel_angles, fallback=True)
@@ -838,7 +841,6 @@ class TrajectoryExtractorNode (object):
 		else:
 			trajectory, trajectory_scores = None, None
 
-
 		# If the trajectory estimate is valid, smooth it and add it to the history buffer
 		if trajectory is not None and trajectory.shape[1] > 3:
 			filtered_trajectory = trajeometry.savgol_filter(trajectory, trajeometry.savgol_window(7, trajectory.shape[1]), 2)
@@ -894,7 +896,7 @@ class TrajectoryExtractorNode (object):
 		curvatures = np.asarray(curvatures)
 		
 		# Now estimate the curvature of the turn by taking the value of maximal density among those curvatures
-		density_model = KernelDensity(kernel="exponential", bandwidth=0.05)
+		density_model = KernelDensity(kernel="epanechnikov", bandwidth=0.05)
 		density_model.fit(np.asarray(curvatures).reshape(-1, 1))
 		curvature_density = density_model.score_samples(curvatures.reshape(-1, 1))
 		marking_curvature = curvatures[np.argmax(curvature_density)]
@@ -940,7 +942,7 @@ class TrajectoryExtractorNode (object):
 		curvatures = np.asarray(curvatures)
 		
 		# Trajectory radius estimation from density among the curvature values
-		density_model = KernelDensity(kernel="exponential", bandwidth=0.05)
+		density_model = KernelDensity(kernel="epanechnikov", bandwidth=0.05)
 		density_model.fit(curvatures.reshape(-1, 1))
 		curvature_density = density_model.score_samples(curvatures.reshape(-1, 1))
 		marking_curvature = curvatures[np.argmax(curvature_density)]
