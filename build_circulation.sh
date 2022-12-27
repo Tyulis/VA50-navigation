@@ -23,17 +23,17 @@ if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cythonize -3 -a -i positioning.pyx
 	cythonize -3 -a -i trajectorybuild.pyx
 	cd ../../..
+
+	cp src/circulation/scripts/fish2bird*.so devel/lib/python3/dist-packages/
 fi
 
 if [[ $1 == build ]] || [[ $2 == build ]] || [[ $3 == build ]]; then
 	if [ `rosversion -d` == melodic ]; then
-		catkin_make --cmake-args -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so
+		catkin build -DCMAKE_BUILD_TYPE=Release -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so
 	else
-		catkin_make
+		catkin build
 	fi
 fi
-
-source devel/setup.bash
 
 if [[ $1 == pack ]] || [[ $2 == pack ]] || [[ $3 == pack ]] || [[ $4 == pack ]]; then
 	mkdir -p _tmp_circulationpack/src/circulation/scripts

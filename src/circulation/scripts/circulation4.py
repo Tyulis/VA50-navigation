@@ -186,11 +186,7 @@ class TrajectoryExtractorNode (object):
 		line_centers = np.asarray([self.parameters["fuzzy-lines"]["centers"][variable] for variable in line_variables])
 		line_malus = np.asarray([self.parameters["fuzzy-lines"]["malus"][variable] for variable in line_variables], dtype=int)
 		line_output_centers = np.asarray(self.parameters["fuzzy-lines"]["centers"]["output"])
-		self.single_line_system = fuzzylines.FuzzySystem(line_centers, line_malus, line_output_centers, self.parameters["fuzzy-lines"]["base-score"])
-
-		lane_centers = line_centers.copy()
-		lane_centers[:3] = lane_centers[:3]**2  # As we pass 2D matrices with (parameter from line 1) × (parameter from line 2), everything in the 1D elements must be squared
-		self.lane_system = fuzzylines.FuzzySystem(lane_centers, line_malus, line_output_centers, self.parameters["fuzzy-lines"]["base-score"])
+		self.lane_system = fuzzylines.FuzzySystem(line_centers, line_malus, line_output_centers, self.parameters["fuzzy-lines"]["base-score"])
 
 	#                        ╔══════════════════════╗                       #
 	# ═══════════════════════╣ SUBSCRIBER CALLBACKS ╠══════════════════════ #
@@ -632,13 +628,16 @@ class TrajectoryExtractorNode (object):
 		<------------------------- float         : Reliability score of the right line in [0, 1], or None
 		"""
 		# Put the variables in a [5, N, N] array for the fuzzy logic module
-		# 2D variables are given as is, 1D variables are multiplicated with themselves (like [variable for curve 1] × [variable for curve 2], for each pair of curves)
-		# This is done with a matrix product VᵀV
-		# For the distances to expected markings, we take the minimum product of distances between both combinations of left and right
-		lane_variables = np.asarray((forward_distance.reshape(-1, 1) @ forward_distance.reshape(1, -1),
-		                             np.minimum(right_line_distance.reshape(-1, 1) @ left_line_distance.reshape(1, -1),
-		                                        left_line_distance.reshape(-1, 1) @ right_line_distance.reshape(1, -1)),
-		                             line_lengths.reshape(-1, 1) @ line_lengths.reshape(1, -1),
+		# We need 2D variables, for each pair of curves, so we need to combine their 1D values
+		# Forward distance and line length use the usual arithmetic mean, the distance to the expected markings
+		# take the best combination of left and right among the pair, and takes the maximum distance among the combination
+		FD_columns, FD_rows = np.meshgrid(forward_distance, forward_distance)
+		LD_columns, LD_rows = np.meshgrid(left_line_distance, left_line_distance)
+		RD_columns, RD_rows = np.meshgrid(right_line_distance, right_line_distance)
+		LL_columns, LL_rows = np.meshgrid(line_lengths, line_lengths)
+		lane_variables = np.asarray(((FD_columns + FD_rows) / 2,
+		                             np.minimum(np.maximum(LD_columns, RD_rows), np.maximum(RD_columns, LD_rows)),
+		                             (LL_columns + LL_rows) / 2,
 		                             parallel_distance,
 		                             parallel_angles))
 		
@@ -691,7 +690,7 @@ class TrajectoryExtractorNode (object):
 				([parallel_distance[left_line_index, right_line_index]], [parallel_distance[left_line_index, right_line_index]]),
 				([parallel_angles[left_line_index, right_line_index]],   [parallel_angles[left_line_index, right_line_index]]),
 			))
-			line_scores = self.single_line_system.fuzzy_scores(line_variables)
+			line_scores = self.lane_system.fuzzy_scores(line_variables)
 			left_line_score = line_scores[0, 0]
 			right_line_score = line_scores[1, 0]
 
@@ -734,7 +733,7 @@ class TrajectoryExtractorNode (object):
 											line_lengths.reshape(-1, 1),
 											np.ones((forward_distance.size, 1)) * self.parameters["fuzzy-lines"]["centers"]["parallel-distances"][0],
 											np.ones((forward_distance.size, 1)) * self.parameters["fuzzy-lines"]["centers"]["parallel-angles"][0]))
-		best_line_index, best_x, best_score = self.single_line_system.fuzzy_best(single_line_variables)
+		best_line_index, best_x, best_score = self.lane_system.fuzzy_best(single_line_variables)
 
 		rospy.loginfo(f"Best single lane score {best_score}")
 		if best_score < self.parameters["fuzzy-lines"]["single-line-selection-threshold"]:
@@ -1134,6 +1133,6 @@ if __name__ == "__main__":
 		road_network = RoadNetwork(sys.argv[2])
 
 		# Initialize and start the node
-		rospy.init_node(parameters["node"]["node-name"])
+		rospy.init_node(parameters["node"]["trajectory-node-name"])
 		node = TrajectoryExtractorNode(parameters, road_network)
 		rospy.spin()

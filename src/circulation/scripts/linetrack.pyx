@@ -167,12 +167,10 @@ cdef int _neighbor_count(uint8_t[:, ::1] remainder, Py_ssize_t base_y, Py_ssize_
 @cython.boundscheck(False)
 cdef void _extract_branch(uint8_t[:, ::1] remainder, deque[(Py_ssize_t, Py_ssize_t)]& branch, Py_ssize_t base_y, Py_ssize_t base_x, Py_ssize_t init_y, Py_ssize_t init_x):
 	"""Extract a single curve in the image, starting from point (base_y, base_x)
-	   - remainder : uint8_t[y, x] : Binary values of the image, pixels at 0 are ignored
-	   - branch    : deque<(Py_ssize_t, Py_ssize_t)> : Branch to fill with discrete curve points, in order
-	   - base_y    : Py_ssize_t : Position at which to start the extraction
-	   - base_x    : Py_ssize_t /
-	   - init_y    : Py_ssize_t : Position to consider as the previous point on the curve. Use only internal, set to -1 for unused.
-	   - init_x    : Py_ssize_t /
+	   - remainder      : uint8_t[y, x] : Binary values of the image, pixels at 0 are ignored
+	   - branch         : deque<(Py_ssize_t, Py_ssize_t)> : Branch to fill with discrete curve points, in order
+	   - base_y, base_x : Py_ssize_t : Position at which to start the extraction
+	   - init_y, init_x : Py_ssize_t : Position to consider as the previous point on the curve. Use only internal, set to -1 for unused.
 	"""
 	cdef Py_ssize_t[8][2] neighbors
 	cdef Py_ssize_t neighbor_index, y, x, i, best_neighbor1, best_neighbor2
@@ -359,7 +357,7 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 
 	cdef double* curvature_buffer = <double*>malloc(filter_size * sizeof(double))
 	cdef double* gaussian_filter = <double*>malloc(filter_size * sizeof(double))
-	cdef double gaussian_weight = 0, smooth_curvature, curvature, previous_curvature = -1
+	cdef double gaussian_weight = 0, smooth_curvature, curvature = 0, previous_curvature = -1
 	cdef double prev_vector_x, prev_vector_y, next_vector_x, next_vector_y, prev_vector_norm, next_vector_norm
 	
 	# Precompute the gaussian filter kernel

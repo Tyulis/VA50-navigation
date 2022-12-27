@@ -46,13 +46,14 @@ cdef class FuzzySystem:
 		self.centers = <double[:self.num_variables, :self.num_sets:1]> self.centers_ptr
 		self.output_centers = <double*>malloc(self.num_outputs * sizeof(double))
 
-		# Copy the centers and output_centers arrays
+		# Copy the centers and output_centers arrays, initialize the rulegroup_counts accumulator by the bay
 		cdef Py_ssize_t i, j
 		for i in range(self.num_variables):
 			for j in range(self.num_sets):
 				self.centers[i, j] = centers[i, j]
 		for i in range(self.num_outputs):
 			self.output_centers[i] = output_centers[i]
+			self.rulegroup_counts[i] = 0
 
 		# Precompute the ruleset
 		# Each rule is identified by a unique index built from the sets of each variable that lead to it
@@ -143,7 +144,7 @@ cdef class FuzzySystem:
 						elif var_value < var_centers[0]:
 							set_functions[var_index, 2, y, x] = 0
 							set_functions[var_index, 0, y, x] = (var_value - var_centers[1]) / (var_centers[0] - var_centers[1])
-							set_functions[var_index, 1, y, x] = 1 - set_functions[var_index, 2, y, x]
+							set_functions[var_index, 1, y, x] = 1 - set_functions[var_index, 0, y, x]
 						# Before the first center -> 100% good
 						else:
 							set_functions[var_index, 2, y, x] = 0

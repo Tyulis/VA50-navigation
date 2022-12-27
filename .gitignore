@@ -127,3 +127,20 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+win_UTAC/
+
+# ROS
+.catkin_tools/
+.vscode/
+devel/
+build/
+*.swp
+.rosinstall
+.rosinstall.bak
+logs/
+src/circulation/scripts/*.html
+src/circulation/scripts/*.c
+src/circulation/scripts/*.cpp
+src/circulation/scripts/*.ipynb
+src/geometry2/
