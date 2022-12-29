@@ -21,6 +21,9 @@ node:
   visualize: true
   time-discrepancy: false
 
+transform:
+  sim-interval: 0.005
+
 control:
   target-speed: 10.0
   k: 0.1

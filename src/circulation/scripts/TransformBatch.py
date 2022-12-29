@@ -20,7 +20,7 @@ class TransformBatchServer(object):
 		self.transform_service = rospy.Service(self.parameters["node"]["transform-service-name"], TransformBatch, self.handle_transform_batch)
 		self.drop_service = rospy.Service(self.parameters["node"]["drop-service-name"], DropVelocity, self.handle_drop_velocity)
 		
-		self.transform_manager = positioning.TransformManager()
+		self.transform_manager = positioning.TransformManager(self.parameters["transform"]["sim-interval"])
 		if self.parameters["node"]["time-discrepancy"]:
 			self.time_discrepancy_buffer = []
 			self.time_discrepancy = None
@@ -87,9 +87,12 @@ class TransformBatchServer(object):
 		
 		transforms = self.transform_manager.get_map_transforms(start_times, end_time)
 
+		# Those transforms are from start_time to end_time, expressed in the map frame as the velocity refers to the map frame
+		# So we need to rotate those back to the end_time frame
 		map_transform = self.get_transform(self.parameters["node"]["world-frame"], self.parameters["node"]["road-frame"])
 		for i in range(transforms.shape[0]):
 			transforms[i, :3, 3] = map_transform @ transforms[i, :3, 3]
+			transforms[i, :3, :3] = map_transform @ transforms[i, :3, :3] @ map_transform.T
 
 		transform_array = Float64MultiArray()
 		transform_array.data = transforms.flatten()
