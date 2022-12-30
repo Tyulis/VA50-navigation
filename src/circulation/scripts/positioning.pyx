@@ -8,8 +8,8 @@ Python objects would fill the memory in no time), and provides the functions to 
 timed transforms from them much faster
 
 Terminology note :
-	- Everything referred to as `time periods` is the time intervals between velocity data points,
-	  to avoid confusion with immediate time points or intervals
+	- Everything referred to as `time periods` are time intervals between velocity data points,
+	  to avoid confusion with other time points that relate to the integration range
 """
 
 import numpy as np
@@ -34,15 +34,15 @@ cdef struct Quaternion:
 
 
 cdef class TransformManager:
-	cdef double sim_interval
+	cdef double sim_interval                # "Simulation interval", duration of the integration intervals for the angular velocity
 	cdef vector[double] time_buffer         # Timestamps in seconds (with decimal part)
 	cdef vector[Vector3] linear_buffer      # Linear speeds along each axis at each timestamp
-	cdef vector[Quaternion] angular_buffer  # Rotation speeds along each axis at each timestamp
+	cdef vector[Quaternion] angular_buffer  # Angular velocity vector at each timestep, as pure quaternions
 
 	def __init__(self, double sim_interval):
 		"""Initialize the transform manager
 		   - sim_interval : double : Interval at which the angular velocity gets interpolated, in seconds
-		                             Shorter is better but slower"""
+		                             Shorter is better but slower. Leaving this higher than 0.01 is likely to lead to very poor results"""
 		self.sim_interval = sim_interval
 
 	def add_velocity(self, double time, (double, double, double) linear, (double, double, double) angular):
@@ -57,8 +57,7 @@ cdef class TransformManager:
 
 	def drop_velocity(self, double end_time):
 		"""Drop all velocity data older than `end_time`
-		   Old velocity data accumulates in memory and slows down the transform computations a bit,
-		   so it’s better to clean them up as regularly as possible
+		   Old velocity data accumulates in memory, so it’s better to clean them up from time to time
 		   - end_time : double : Timestamp before which velocity data must be dropped
 		"""
 		cdef size_t i
@@ -158,7 +157,7 @@ cdef class TransformManager:
 			# When we enter this loop, current_time is end_time or the last velocity data timestamp,
 			# so either way, no need to worry about it as values will be integrated until current_time
 
-			# Handle the start_times that are in this time period
+			# Handle the start_times that are within this time period
 			while start_times[start_index] > period_start and start_index >= 0:
 				self.integrate_linear_velocity_reverse(&translation[start_index], linear_start, linear_end, period_start, period_end, start_times[start_index], current_time)
 				self.integrate_angular_velocity_reverse(&rotation[start_index], angular_start, angular_end, period_start, period_end, start_times[start_index], current_time)
@@ -186,7 +185,7 @@ cdef class TransformManager:
 
 		transforms = np.empty((nstarts, 4, 4))
 		cdef double[:, :, :] transforms_view = transforms
-		cdef double s = 1  # TODO : Check whether all of our quaternions are unitary
+		cdef double s
 		cdef Py_ssize_t i
 		cdef Quaternion current_rotation
 		for i in range(nstarts):
@@ -256,7 +255,7 @@ cdef class TransformManager:
 
 	# Now that’s the tricky part : integrating the linear velocity is trivial, but the angular velocity is on a whole other level
 	# From M. Boyle, The integration of angular velocity, 2017, the angular velocity can be integrated using the following differential equation :
-	# Ṙ(t) = 1/2 ω(t)R(t), where R(t) is the quaternion representing the rotation from the world frame to the body frame, and
+	# Ṙ(t) = 1/2 ω(t)R(t), where R(t) is the quaternion representing the rotation from the "world" (target) frame to the body frame, and
 	# ω(t) the angular velocity vector as a pure quaternion
 	# Now, this is a system of non-linear differential equations and I’m no quaternion expert,
 	# so let’s approximate it numerically using Taylor expansion and linear interpolation over small time steps
@@ -271,6 +270,7 @@ cdef class TransformManager:
 		# See this : https://math.stackexchange.com/questions/189185/quaternion-differentiation
 		# Note that the angular speed is first stored in chronological order, but as we need the transform from the end to the start,
 		# we need it in reverse, hence the minus sign instead of +
+		# As long as the angular speed is not too high, the first-degree Taylor expansion seems satisfactory
 		rotation.w -= (timedelta / 2) * (-rotation.x * angular_speed.x - rotation.y * angular_speed.y - rotation.z * angular_speed.z)
 		rotation.x -= (timedelta / 2) * ( rotation.w * angular_speed.x + rotation.z * angular_speed.y - rotation.y * angular_speed.z)
 		rotation.y -= (timedelta / 2) * (-rotation.z * angular_speed.x + rotation.w * angular_speed.y + rotation.x * angular_speed.z)

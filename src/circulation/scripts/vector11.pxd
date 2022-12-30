@@ -1,3 +1,5 @@
+# Cython header for the C++ STL vector, with C++11 additions (Cython 0.29’s libcpp doesn’t have them)
+
 cdef extern from "<vector>" namespace "std" nogil:
     cdef cppclass vector[T,ALLOCATOR=*]:
         ctypedef T value_type

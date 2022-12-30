@@ -1,18 +1,20 @@
 # distutils: language=c++
+# cython: boundscheck=False, wraparound=False, initializedcheck=False
 
 """
 Module that does curve extraction from binary images
 """
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 import trajeometry
 
 cimport cython
+cimport trajutil
 cimport trajeometry
+cimport numpy as cnp
 from cython.operator cimport dereference as deref, postincrement as postinc
-from libc.math cimport sqrt, acos, exp, M_PI, INFINITY
+from libc.math cimport sqrt, acos, exp, M_PI, INFINITY, NAN, cos, sin
 from libc.stdlib cimport malloc, free
 from libcpp.deque cimport deque
 from libcpp.vector cimport vector
@@ -26,11 +28,29 @@ cdef extern from "<algorithm>" namespace "std":
 	T min[T](T a, T b)
 
 
+# Result of a joining capability check
 cdef struct _MergeState:
-	bint merge    # True => the lines can be merged, False => they don’t
-	bint flip1    # Whether to flip the first line before concatenation
-	bint flip2    # Whether to flip the second line before concatenation
-	double score  # Merge score of the combination
+	bint merge        # True => the lines can be merged, False => they don’t
+	bint flip1        # Whether to flip the first line before concatenation
+	bint flip2        # Whether to flip the second line before concatenation
+	bint arc          # Whether the join is a circle arc
+	double center_x   # Circle arc center
+	double center_y   # Can’t make it an array without MSVC complaining
+	double radius     # Circle arc radius
+	double error      # Mean squared error of the merge
+	double distance   # Minimal distance between the lines
+
+# Accumulator used to solve circular regression by Kåsa’s method
+cdef struct _KasaAccumulator:
+	double sum_x
+	double sum_xx
+	double sum_xxx
+	double sum_y
+	double sum_yy
+	double sum_yyy
+	double sum_xy
+	double sum_xxy
+	double sum_xyy
 
 cdef double _acos_clip(double val):
 	"""Utility function, when we try to get the angle between two vectors using the dot product,
@@ -42,106 +62,6 @@ cdef double _acos_clip(double val):
 		return acos(1)
 	else:
 		return acos(val)
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-cdef _MergeState merge_lines(double[:, :] line1, double[:, :] line2, double merge_max_distance, double angle_diff_threshold, double merge_score_threshold):
-	"""Check whether both lines can be merged
-	   - line1                    : double[2, M] : First point sequence
-	   - line2                    : double[2, N] : Second point sequence
-	   - merge_max_distance       : double       : Max distance at which two lines can be merged
-	   - angle_diff_threshold     : double       : Maximum difference between the angles of both extremity vectors to be able to merge both lines
-	   - merge_score_threshold    : double       : Maximum score required to merge both lines
-	<------------------------------ _MergeState  : Resulting merge prediction
-	"""
-
-	cdef _MergeState result = _MergeState(merge=False, flip1=False, flip2=False, score=INFINITY)
-	cdef Py_ssize_t line1_length = line1.shape[1], line2_length = line2.shape[1]
-	
-	# The lines could be in any direction
-	# We need the points and vectors that directly face each other
-	# Those are the squared distance to save a few sqrt() calls
-	cdef double extreme_distance_00 = (line1[0, 0] - line2[0, 0])**2 + (line1[1, 0] - line2[1, 0])**2
-	cdef double extreme_distance_10 = (line1[0, line1_length-1] - line2[0, 0])**2 + (line1[1, line1_length-1] - line2[1, 0])**2
-	cdef double extreme_distance_01 = (line1[0, 0] - line2[0, line2_length-1])**2 + (line1[1, 0] - line2[1, line2_length-1])**2
-	cdef double extreme_distance_11 = (line1[0, line1_length-1] - line2[0, line2_length-1])**2 + (line1[1, line1_length-1] - line2[1, line2_length-1])**2
-	cdef double distance
-
-	# To concatenate them at the end, the lines must be like 0 --line1--> -1 |----| 0 --line2--> -1
-	# So the closest points must be line1[-1] and line2[0]
-	# So flip 1 if the closest point is 0, flip 2 if the closest point is -1
-	if extreme_distance_00 <= extreme_distance_01 and extreme_distance_00 <= extreme_distance_10 and extreme_distance_00 <= extreme_distance_11:
-		distance = sqrt(extreme_distance_00)
-		result.flip1 = True
-		result.flip2 = False
-	elif extreme_distance_01 <= extreme_distance_00 and extreme_distance_01 <= extreme_distance_10 and extreme_distance_01 <= extreme_distance_11:
-		distance = sqrt(extreme_distance_01)
-		result.flip1 = True
-		result.flip2 = True
-	elif extreme_distance_10 <= extreme_distance_00 and extreme_distance_10 <= extreme_distance_01 and extreme_distance_10 <= extreme_distance_11:
-		distance = sqrt(extreme_distance_10)
-		result.flip1 = False
-		result.flip2 = False
-	else:
-		distance = sqrt(extreme_distance_11)
-		result.flip1 = False
-		result.flip2 = True
-
-	if distance > merge_max_distance:
-		return result
-
-	# Extract the closest points and vectors of each line to the other
-	# Same flipping logic
-	cdef double point1_x, point1_y, vector1_x, vector1_y
-	if result.flip1:
-		point1_x = line1[0, 0]
-		point1_y = line1[1, 0]
-		vector1_x = point1_x - line1[0, 1]
-		vector1_y = point1_y - line1[1, 1]
-	else:
-		point1_x = line1[0, line1_length-1]
-		point1_y = line1[1, line1_length-1]
-		vector1_x = point1_x - line1[0, line1_length-2]
-		vector1_y = point1_y - line1[1, line1_length-2]
-
-	cdef double point2_x, point2_y, vector2_x, vector2_y
-	if result.flip2:
-		point2_x = line2[0, line2_length-1]
-		point2_y = line2[1, line2_length-1]
-		vector2_x = point2_x - line2[0, line2_length-2]
-		vector2_y = point2_y - line2[1, line2_length-2]
-	else:
-		point2_x = line2[0, 0]
-		point2_y = line2[1, 0]
-		vector2_x = point2_x - line2[0, 1]
-		vector2_y = point2_y - line2[1, 1]
-	
-	cdef double link_vector_x, link_vector_y
-	link_vector_x = point2_x - point1_x
-	link_vector_y = point2_y - point1_y
-
-	cdef double vector1_norm = sqrt(vector1_x*vector1_x + vector1_y*vector1_y)
-	cdef double vector2_norm = sqrt(vector2_x*vector2_x + vector2_y*vector2_y)
-	cdef double link_vector_norm = sqrt(link_vector_x*link_vector_x + link_vector_y*link_vector_y)
-
-	# Compute the angle between both extreme vectors
-	# They are pointed toward each other, so one of them is reversed to compare the angles correctly
-	# We use the dot product (X₁·X₂ = x₁x₂ + y₁y₂ = ||X₁|| × ||X₂|| × cos(X₁^X₂)) to avoid arctan2 output range issues
-	cdef double endpoints_angle = _acos_clip((-vector1_x*vector2_x - vector1_y*vector2_y) / (vector1_norm * vector2_norm))
-	cdef double necessary_angle1 = _acos_clip((link_vector_x*vector1_x + link_vector_y*vector1_y) / (vector1_norm * link_vector_norm))
-	cdef double necessary_angle2 = _acos_clip((-link_vector_x*vector2_x - link_vector_y*vector2_y) / (vector2_norm * link_vector_norm))
-
-	# Angles not close enough -> ditch this combination	
-	if endpoints_angle > angle_diff_threshold:
-		return result
-	
-	cdef double score = distance * max(necessary_angle1, necessary_angle2)
-	if score < merge_score_threshold:  # Those are a merge candidate
-		result.score = score
-		result.merge = True
-		return result
-	else:
-		return result
 
 @cython.wraparound(False)
 @cython.boundscheck(False)
@@ -458,26 +378,335 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 
 	return cluster_lines
 
+
+cdef void _fit_line(_MergeState* result, double[:, :] line1, double[:, :] line2, Py_ssize_t start1, Py_ssize_t end1, Py_ssize_t start2, Py_ssize_t end2):
+	"""Check mergeability by fitting a line for all points from line1[start1:end1] and line2[start2:end2]
+	   - result       : _MergeState* : Merge check result to fill
+	   - line1        : double[2, N] : First curve to check
+	   - line2        : double[2, M] : Second curve to check
+	   - start1, end1 : Py_ssize_t   : Range of indices to use for the regression in line1 (start inclusive, end exclusive)
+	   - start2, end2 : Py_ssize_t   : Range of indices to use for the regression in line2 (start inclusive, end exclusive)
+	""" 
+	# As always in this program, we use PCA instead of the usual linear regression techniques,
+	# because the latter are to infer linear *functions* y(x), while we’re looking for geometric lines in the plane,
+	cdef Py_ssize_t npoints = (end1 - start1) + (end2 - start2), i
+	cdef double[2] eigenvalues
+	cdef double[2][2] eigenvectors
+	cdef double* points_ptr = <double*> malloc(2 * npoints * sizeof(double))
+	cdef double[:, ::1] points = <double[:2, :npoints:1]> points_ptr
+
+	# Copy the relevant points in a buffer
+	for i in range(start1, end1):
+		points[0, i - start1] = line1[0, i]
+		points[1, i - start1] = line1[1, i]
+	for i in range(start2, end2):
+		points[0, end1 - start1 + i - start2] = line2[0, i]
+		points[1, end1 - start1 + i - start2] = line2[1, i]
+	
+	# Compute the PCA of those points
+	if not trajutil.pca_2x2(points, eigenvalues, eigenvectors):
+		result.error = INFINITY
+		return
+		
+	# Then we can just transform the points in PCA space and compute the MSE with the distances along the secondary component
+	# To save us a bit of computation, we can just calculate the value along the secondary component
+	# This is not very clean, but as we won’t use the original `points` again, let’s store the ev2 coordinate in points[1]
+	# to avoid recalculating or allocating another buffer
+	cdef double ev2_mean = 0
+	for i in range(npoints):
+		points[1, i] = eigenvectors[1][0] * points[0, i] + eigenvectors[1][1] * points[1, i]
+		ev2_mean += points[1, i]
+	ev2_mean /= npoints
+	
+	result.error = 0
+	for i in range(npoints):
+		result.error += (points[1, i] - ev2_mean)**2
+	result.error = sqrt(result.error / npoints)
+
+	free(points_ptr)
+
+cdef void _kasa_accumulate(_KasaAccumulator* accumulator, double[:, :] line, Py_ssize_t start, Py_ssize_t end):
+	"""Compute all necessary sums for the Kåsa circular regression method over line[start:end]
+	   - accumulator : _KasaAccumulator* : Structure with the actual accumulators
+	   - line        : double[:, :]      : Line to accumulate over
+	   - start, end  : Py_ssize_t        : Index range to accumulate over (start inclusive, end exclusive)
+	"""
+	cdef Py_ssize_t i
+	for i in range(start, end):
+		# To solve the Kåsa circular regression, we need the sums of all values of x, x², x³, y, y², y³, xy, x²y and xy²
+		accumulator.sum_x   += line[0, i]
+		accumulator.sum_y   += line[1, i]
+		accumulator.sum_xx  += line[0, i]*line[0, i]
+		accumulator.sum_yy  += line[1, i]*line[1, i]
+		accumulator.sum_xxx += line[0, i]*line[0, i]*line[0, i]
+		accumulator.sum_yyy += line[1, i]*line[1, i]*line[1, i]
+		accumulator.sum_xy  += line[0, i]*line[1, i]
+		accumulator.sum_xxy += line[0, i]*line[0, i]*line[1, i]
+		accumulator.sum_xyy += line[0, i]*line[1, i]*line[1, i]
+
+cdef void _fit_arc_kasa(_MergeState* result, double[:, :] line1, double[:, :] line2, Py_ssize_t start1, Py_ssize_t end1, Py_ssize_t start2, Py_ssize_t end2):
+	"""Fit a circular arc to all points in line1[start1:end1] and line2[start2:end2]
+	   - result       : _MergeState* : Merge check result to fill
+	   - line1        : double[2, N] : First line to check
+	   - line2        : double[2, M] : Second line to check
+	   - start1, end1 : Py_ssize_t   : Index range to use for the regression on line1 (start inclusive, end exclusive)
+	   - start2, end2 : Py_ssize_t   : Index range to use for the regression on line2 (start inclusive, end exclusive)
+	"""
+	# Fit a circle arc with Kåsa’s method
+	# We use this method because it is linear, and as such, much more efficient than the non-linear regression methods
+	# that require heavy iterative algorithms. Even though the results are not the same, it’s perfect for our use case
+	
+	# Compute the sums over all relevant points on both lines
+	cdef _KasaAccumulator accumulator = _KasaAccumulator(sum_x = 0, sum_y = 0, sum_xx = 0, sum_yy = 0, sum_xxx = 0, sum_yyy = 0, sum_xy = 0, sum_xxy = 0, sum_xyy = 0)
+	_kasa_accumulate(&accumulator, line1, start1, end1)
+	_kasa_accumulate(&accumulator, line2, start2, end2)
+	
+	# Intermediate results
+	cdef Py_ssize_t npoints = (end2 - start2) + (end1 - start1)
+	cdef double alpha = 2 * (accumulator.sum_x**2 - npoints * accumulator.sum_xx)
+	cdef double beta = 2 * (accumulator.sum_x*accumulator.sum_y - npoints * accumulator.sum_xy)
+	cdef double gamma = 2 * (accumulator.sum_y**2 - npoints * accumulator.sum_yy)
+	cdef double delta = accumulator.sum_xx*accumulator.sum_x - npoints*accumulator.sum_xxx + accumulator.sum_x*accumulator.sum_yy - npoints*accumulator.sum_xyy
+	cdef double epsilon = accumulator.sum_xx*accumulator.sum_y - npoints*accumulator.sum_yyy + accumulator.sum_y*accumulator.sum_yy - npoints*accumulator.sum_xxy
+
+	# Center of the circle
+	result.center_x = (delta*gamma - epsilon*beta) / (alpha*gamma - beta**2)
+	result.center_y = (alpha*epsilon - beta*delta) / (alpha*gamma - beta**2)
+	
+	# Now, this method only gives us the center of the circle
+	# Then the radius is just the mean of distances to the center
+	result.radius = 0
+	for i in range(start1, end1):
+		result.radius += sqrt((line1[0, i] - result.center_x)**2 + (line1[1, i] - result.center_y)**2)
+	for i in range(start2, end2):
+		result.radius += sqrt((line2[0, i] - result.center_x)**2 + (line2[1, i] - result.center_y)**2)
+	result.radius /= npoints
+
+	# And finally, the RMS error with distance_to_center - radius as base error
+	result.error = 0
+	for i in range(start1, end1):
+		result.error += (sqrt((line1[0, i] - result.center_x)**2 + (line1[1, i] - result.center_y)**2) - result.radius) ** 2
+	for i in range(start2, end2):
+		result.error += (sqrt((line2[0, i] - result.center_x)**2 + (line2[1, i] - result.center_y)**2) - result.radius) ** 2
+	result.error = sqrt(result.error / npoints)
+
+
+cdef _MergeState check_mergeability(double[:, :] line1, double[:, :] line2, Py_ssize_t estimate_start, Py_ssize_t estimate_end, double merge_max_distance, double max_angle_diff, double max_rmse):
+	"""Check whether two curves can be joined, and how
+	   First check whether a simple line joint can do the job, then with a circle arc
+	   - line1                        : double[2, N] : First line to check
+	   - line2                        : double[2, M] : Second line to check
+	   - estimate_start, estimate_end : Py_ssize_t   : Range index for the joint fittings, relative to the closest points between both curves
+	   - merge_max_distance           : double       : Curves with relative distance higher than this value can never be merged
+	   - max_angle_diff               : double       : Curves with relative angle in radians higher than this value can never be merged
+	   - max_rmse                     : double       : Curves can be merged when one of the fitting methods produces a Root Mean Squared Error lower than this threshold
+	<---------------------------------- _MergeState  : Check result with all necessary information, check the structure definition
+	"""
+	cdef _MergeState result = _MergeState(merge=False, flip1=False, flip2=False, arc=False, center_x=NAN, center_y=NAN, radius=NAN, error=INFINITY, distance=NAN)
+	cdef Py_ssize_t line1_length = line1.shape[1], line2_length = line2.shape[1]
+	
+	# The lines could be in any direction
+	# We need the points and vectors that directly face each other
+	# Those are the squared distance to save a few sqrt() calls
+	cdef double extreme_distance_00 = (line1[0, 0] - line2[0, 0])**2 + (line1[1, 0] - line2[1, 0])**2
+	cdef double extreme_distance_10 = (line1[0, line1_length-1] - line2[0, 0])**2 + (line1[1, line1_length-1] - line2[1, 0])**2
+	cdef double extreme_distance_01 = (line1[0, 0] - line2[0, line2_length-1])**2 + (line1[1, 0] - line2[1, line2_length-1])**2
+	cdef double extreme_distance_11 = (line1[0, line1_length-1] - line2[0, line2_length-1])**2 + (line1[1, line1_length-1] - line2[1, line2_length-1])**2
+
+	# To concatenate them at the end, the lines must be like 0 --line1--> -1 |----| 0 --line2--> -1
+	# So the closest points must be line1[-1] and line2[0]
+	# So flip 1 if the closest point is 0, flip 2 if the closest point is -1
+	if extreme_distance_00 <= extreme_distance_01 and extreme_distance_00 <= extreme_distance_10 and extreme_distance_00 <= extreme_distance_11:
+		result.distance = sqrt(extreme_distance_00)
+		result.flip1 = True
+		result.flip2 = False
+	elif extreme_distance_01 <= extreme_distance_00 and extreme_distance_01 <= extreme_distance_10 and extreme_distance_01 <= extreme_distance_11:
+		result.distance = sqrt(extreme_distance_01)
+		result.flip1 = True
+		result.flip2 = True
+	elif extreme_distance_10 <= extreme_distance_00 and extreme_distance_10 <= extreme_distance_01 and extreme_distance_10 <= extreme_distance_11:
+		result.distance = sqrt(extreme_distance_10)
+		result.flip1 = False
+		result.flip2 = False
+	else:
+		result.distance = sqrt(extreme_distance_11)
+		result.flip1 = False
+		result.flip2 = True
+
+	# The closest points are too far away -> ditch this combination
+	if result.distance > merge_max_distance:
+		return result
+	
+	# Get the initial points and vectors, and the estimate index ranges depending on the flip status of both curves
+	cdef Py_ssize_t start1, start2, end1, end2
+	cdef double[2] point1, point2, vector1, vector2, joint_vector
+	if result.flip1:
+		start1 = estimate_start
+		end1 = estimate_end
+		point1[0] = line1[0, 0]
+		point1[1] = line1[1, 0]
+		vector1[0] = point1[0] - line1[0, 1]
+		vector1[1] = point1[1] - line1[1, 1]
+	else:
+		start1 = line1.shape[1] - estimate_end
+		end1 = line1.shape[1] - estimate_start
+		point1[0] = line1[0, line1_length - 1]
+		point1[1] = line1[1, line1_length - 1]
+		vector1[0] = point1[0] - line1[0, line1_length - 2]
+		vector1[1] = point1[1] - line1[1, line1_length - 2]
+	if result.flip2:
+		start2 = line2.shape[1] - estimate_end
+		end2 = line2.shape[1] - estimate_start
+		point2[0] = line2[0, line2_length - 1]
+		point2[1] = line2[1, line2_length - 1]
+		# We need it reversed to compare its angle with the joint vector that goes 1 -> 2
+		vector2[0] = -(point2[0] - line2[0, line2_length - 2])
+		vector2[1] = -(point2[1] - line2[1, line2_length - 2])
+	else:
+		start2 = estimate_start
+		end2 = estimate_end
+		point2[0] = line2[0, 0]
+		point2[1] = line2[1, 0]
+		vector2[0] = -(point2[0] - line2[0, 1])
+		vector2[1] = -(point2[1] - line2[1, 1])
+	
+	# Get the vector from point1 to point2, and fail if the extreme vector of one of the curves differs too much from it
+	joint_vector[0] = point2[0] - point1[0]
+	joint_vector[1] = point2[1] - point1[1]
+	if trajeometry.vector_angle(vector1, joint_vector) > max_angle_diff or trajeometry.vector_angle(vector2, joint_vector) > max_angle_diff:
+		return result
+	
+	# Clamp the estimate range to the amount of points
+	if start1 < 0: start1 = 0
+	if start2 < 0: start2 = 0
+	if end1 >= line1.shape[1]: end1 = line1.shape[1]
+	if end2 >= line2.shape[1]: end2 = line2.shape[1]
+
+	# Try the line fitting
+	_fit_line(&result, line1, line2, start1, end1, start2, end2)
+	if result.error < max_rmse:
+		result.merge = True
+		result.arc = False
+		return result
+
+	# If it’s unsatisfactory, check with a circle arc
+	_fit_arc_kasa(&result, line1, line2, start1, end1, start2, end2)
+	if result.error < max_rmse:
+		result.merge = True
+		result.arc = True
+	
+	# Nope, nothing is satisfactory, return with .merge=False
+	return result
+
+cdef cnp.ndarray _join_curves_line(_MergeState merge_result, double[:, :] line1, double[:, :] line2):
+	"""Join two curves with a line between the extreme points
+	   - merge_result : _MergeState     : Merge check result on which to base the operation
+	   - line1        : double[2, N]    : First line to join
+	   - line2        : double[2, M]    : Second line to join
+	<------------------ ndarray[2, M+N] : Resulting joined curve
+	"""
+	cdef cnp.ndarray merged_line = np.empty((2, line1.shape[1] + line2.shape[1]))
+	cdef double[:, ::1] merged_line_view = merged_line
+	cdef Py_ssize_t i
+
+	# Just concatenate them, it will make a straight segment that will get resampled later
+	for i in range(line1.shape[1]):
+		if merge_result.flip1:
+			merged_line_view[:, i] = line1[:, line1.shape[1] - i - 1]
+		else:
+			merged_line_view[:, i] = line1[:, i]
+	for i in range(line2.shape[1]):
+		if merge_result.flip2:
+			merged_line_view[:, line1.shape[1] + i] = line2[:, line2.shape[1] - i - 1]
+		else:
+			merged_line_view[:, line1.shape[1] + i] = line2[:, i]
+	return merged_line
+
+cdef cnp.ndarray _join_curves_arc(_MergeState merge_result, double[:, :] line1, double[:, :] line2, double branch_step):
+	"""Join two curves with a circle arc between the extreme points
+	   - merge_result : _MergeState          : Merge check result with the arc parameters
+	   - line1        : double[2, N]         : First curve to join
+	   - line2        : double[2, M]         : Second curve to join
+	   - branch_step  : double               : Base distance between curve points for the interpolation
+	<------------------ double[2, N + x + M] : Joined and interpolated curve"""
+	# Get the relevant extreme points
+	cdef double[2] last_point1, last_point2
+	if merge_result.flip1:
+		last_point1[0] = line1[0, 0]
+		last_point1[1] = line1[1, 0]
+	else:
+		last_point1[0] = line1[0, line1.shape[1] - 1]
+		last_point1[1] = line1[1, line1.shape[1] - 1]
+	if merge_result.flip2:
+		last_point2[0] = line2[0, line2.shape[1] - 1]
+		last_point2[1] = line2[1, line2.shape[1] - 1]
+	else:
+		last_point2[0] = line2[0, 0]
+		last_point2[1] = line2[1, 0]
+	
+	# Compute the vectors from the center of the circle to those extreme points
+	# The interpolation arc is over the relative angle between those two vectors
+	cdef double[2] center_vector1, center_vector2 
+	center_vector1[0] = last_point1[0] - merge_result.center_x
+	center_vector1[1] = last_point1[1] - merge_result.center_y
+	center_vector2[0] = last_point2[0] - merge_result.center_x
+	center_vector2[1] = last_point2[1] - merge_result.center_y
+	cdef double joint_angle = trajeometry.vector_angle(center_vector1, center_vector2)
+
+	# branch_step / radius is the angle step around that circle in radians
+	# N angle steps -> N - 1 intermediate points
+	cdef double angle_step = branch_step / merge_result.radius
+	cdef Py_ssize_t i, joint_points = <Py_ssize_t> (joint_angle / angle_step - 1)
+	
+	cdef cnp.ndarray merged_line = np.empty((2, line1.shape[1] + joint_points + line2.shape[1]))
+	cdef double[:, ::1] merged_line_view = merged_line
+
+	# Copy the original lines at their respective positions
+	for i in range(line1.shape[1]):
+		if merge_result.flip1:
+			merged_line_view[:, i] = line1[:, line1.shape[1] - i - 1]
+		else:
+			merged_line_view[:, i] = line1[:, i]
+	for i in range(line2.shape[1]):
+		if merge_result.flip2:
+			merged_line_view[:, line1.shape[1] + joint_points + i] = line2[:, line2.shape[1] - i - 1]
+		else:
+			merged_line_view[:, line1.shape[1] + joint_points + i] = line2[:, i]
+	
+	# Then interpolate between the center vectors
+	# The joint points are just the center vectors rotated by the angle step, and with their lengths interpolated
+	cdef double center_vector1_norm = sqrt(center_vector1[0]*center_vector1[0] + center_vector1[1]*center_vector1[1])
+	cdef double center_vector2_norm = sqrt(center_vector2[0]*center_vector2[0] + center_vector2[1]*center_vector2[1])
+	cdef double rotation_angle, length_factor
+	for i in range(joint_points):
+		rotation_angle = angle_step * (i + 1)
+		length_factor = (rotation_angle*center_vector2_norm + (joint_angle - rotation_angle)*center_vector1_norm) / (joint_angle * center_vector1_norm)
+		merged_line_view[0, line1.shape[1] + i] = (cos(rotation_angle)*center_vector1[0] - sin(rotation_angle)*center_vector1[1]) * length_factor + merge_result.center_x
+		merged_line_view[1, line1.shape[1] + i] = (sin(rotation_angle)*center_vector1[0] + cos(rotation_angle)*center_vector1[1]) * length_factor + merge_result.center_y
+	return merged_line
+
 @cython.wraparound(False)
 @cython.boundscheck(False)
 @cython.initializedcheck(False)
-cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_window=20, int smoothing_filter_window=12, double branch_step=1, double min_branch_length=5, double min_line_length=5, double max_curvature=1, int curvature_filter_size=7, double curvature_filter_deviation=1, double merge_max_distance=100, double angle_diff_threshold=np.pi/3, double merge_score_threshold=50):
+cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_window=20, int smoothing_filter_window=12, double branch_step=1, double min_branch_length=5, double min_line_length=5, double max_curvature=1, int curvature_filter_size=7, double curvature_filter_deviation=1, double merge_max_distance=100, Py_ssize_t estimate_start=2, Py_ssize_t estimate_end=8, double max_angle_diff=1, double max_rmse=1):
 	"""Take a list of discrete curves, smooth them, split them at angles and merge those that would make continuous curves,
 	   such that the result is a set of smooth discrete curves
-	   - lines                      : list<ndarray[2, N]> : List of discrete curves
-	   - savgol_degree              : int                 : Polynomial degree of the Savitzky-Golay filters used to smooth curves
-	   - initial_filter_window      : int                 : Size of the window of the Savitzky-Golay filter applied before doing anything else
-	   - smoothing_filter_window    : int                 : Size of the final Savitzky-Golay filter used to smooth the resulting curves
-	   - branch_step                : double              : Curves are resampled to have point at this distance from one another
-	   - min_branch_length          : double              : Minimum length (in curve length units) of intermediate curve sections, shorter sections are eliminated
-	   - min_line_length            : double              : Minimum length of the resulting curves, shorter curves are eliminated
-	   - max_curvature              : double              : Curves are split when their curvature in rad/unit exceeds this threshold
-	   - curvature_filter_size      : int                 : Size of the gaussian filter used to smooth the curvature in `cut_line_angles`
-	   - curvature_filter_deviation : double              : Standard deviation σ of the gaussian filter used to smooth the curvature in `cut_line_angles`
-	   - merge_max_distance         : double              : Maximum distance at which two curves can be merged together
-	   - angle_diff_threshold       : double              : Maximum relative angle in radians at which two curves can be merged together
-	   - merge_score_threshold      : double              : Maximum score at which two curves are considered candidate for merge
-	<-------------------------------- list<ndarray[2, M]> : List of resulting discrete curves. There are no guarantees of size, number of curves or any correspondance whatsoever with the initial curves
+	   - lines                        : list<ndarray[2, N]> : List of discrete curves
+	   - savgol_degree                : int                 : Polynomial degree of the Savitzky-Golay filters used to smooth curves
+	   - initial_filter_window        : int                 : Size of the window of the Savitzky-Golay filter applied before doing anything else
+	   - smoothing_filter_window      : int                 : Size of the final Savitzky-Golay filter used to smooth the resulting curves
+	   - branch_step                  : double              : Curves are resampled to have point at this distance from one another
+	   - min_branch_length            : double              : Minimum length (in curve length units) of intermediate curve sections, shorter sections are eliminated
+	   - min_line_length              : double              : Minimum length of the resulting curves, shorter curves are eliminated
+	   - max_curvature                : double              : Curves are split when their curvature in rad/unit exceeds this threshold
+	   - curvature_filter_size        : int                 : Size of the gaussian filter used to smooth the curvature in `cut_line_angles`
+	   - curvature_filter_deviation   : double              : Standard deviation σ of the gaussian filter used to smooth the curvature in `cut_line_angles`
+	   - merge_max_distance           : double              : Maximum distance at which two curves can be merged together
+	   - estimate_start, estimate_end : Py_ssize_t          : Range index for the joint fittings, relative to the closest points between both curves
+	   - max_angle_diff               : double              : Maximum relative angle in radians at which two curves can be merged together
+	   - merge_score_threshold        : double              : Maximum score at which two curves are considered candidate for merge
+	   - max_rmse                     : double              : Maximum value of the Root Mean Squared Error with the fitted estimator to accept a merge
+	<---------------------------------- list<ndarray[2, M]> : List of resulting discrete curves. There are no guarantees of size, number of curves or any correspondance whatsoever with the initial curves
 	"""
 	
 	# Filter the extracted branches, and cut them where the angle gets too sharp, to avoid rough edges getting in the way of merging
@@ -500,10 +729,9 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 	cdef double[:, :] line1, line2
 	cdef cset[pair[Py_ssize_t, Py_ssize_t]] passed_combinations
 	cdef cset[pair[Py_ssize_t, Py_ssize_t]].iterator it
-	cdef double[:, ::1] merged_line_view
 	cdef Py_ssize_t i
 
-	cdef _MergeState merge_candidate, merge_result = _MergeState(merge=False, score=-1, flip1=False, flip2=False)
+	cdef _MergeState merge_candidate, merge_result = _MergeState(merge=False, flip1=False, flip2=False, arc=False, center_x=NAN, center_y=NAN, radius=NAN, error=INFINITY, distance=NAN)
 	cdef Py_ssize_t index1, index2, merge_index = -1
 	while True:
 		for index1 in range(len(cluster_lines)):
@@ -515,10 +743,10 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 					continue  # Already done, skip
 
 				line2 = cluster_lines[index2]
-				merge_candidate = merge_lines(line1, line2, merge_max_distance=merge_max_distance, angle_diff_threshold=angle_diff_threshold, merge_score_threshold=merge_score_threshold)
+				merge_candidate = check_mergeability(line1, line2, estimate_start, estimate_end, merge_max_distance, max_angle_diff, max_rmse)
 				# Lines can be merged and they are the best candidates yet : set them as the current merge candidate
 				if merge_candidate.merge:
-					if not merge_result.merge or merge_candidate.score < merge_result.score:
+					if not merge_result.merge or merge_candidate.error*merge_candidate.distance < merge_result.error*merge_result.distance:
 						merge_result = merge_candidate
 						merge_index = index2
 
@@ -531,20 +759,12 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 				cluster_lines.pop(max(index1, merge_index))
 				cluster_lines.pop(min(index1, merge_index))
 
-				merged_line = np.empty((2, line1.shape[1] + line2.shape[1]))
-				merged_line_view = merged_line
-
-				for i in range(line1.shape[1]):
-					if merge_result.flip1:
-						merged_line_view[:, i] = line1[:, line1.shape[1] - i - 1]
-					else:
-						merged_line_view[:, i] = line1[:, i]
-				for i in range(line2.shape[1]):
-					if merge_result.flip2:
-						merged_line_view[:, line1.shape[1] + i] = line2[:, line2.shape[1] - i - 1]
-					else:
-						merged_line_view[:, line1.shape[1] + i] = line2[:, i]
-				
+				# Join the curve with the right joint type
+				if merge_result.arc:
+					merged_line = _join_curves_arc(merge_result, line1, line2, branch_step)
+				else:
+					merged_line = _join_curves_line(merge_result, line1, line2)
+								
 				cluster_lines.append(merged_line)
 
 				# Remove the combinations that include the merged lines, to check them again

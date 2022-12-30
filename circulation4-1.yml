@@ -81,8 +81,12 @@ find-lines-parameters:
   curvature_filter_size: 9
   curvature_filter_deviation: 1
   merge_max_distance: 140
-  angle_diff_threshold: 0.31
-  merge_score_threshold: 5
+#  angle_diff_threshold: 0.31
+#  merge_score_threshold: 5
+  estimate_start: 1
+  estimate_end: 8
+  max_angle_diff: 0.86
+  max_rmse: 2
 
 fuzzy-lines:
   local-area-x: 10
@@ -104,3 +108,4 @@ fuzzy-lines:
   lane-selection-threshold: 0.7
   single-line-selection-threshold: 0.6
   vertical-angle-tolerance: 0.5
+  main-angle-cut: 0.43

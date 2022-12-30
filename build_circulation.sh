@@ -25,6 +25,7 @@ fi
 if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cd src/circulation/scripts
 	cythonize -3 -a -i trajeometry.pyx
+	cythonize -3 -a -i trajutil.pyx
 	cythonize -3 -a -i fish2bird.pyx
 	cythonize -3 -a -i linetrack.pyx
 	cythonize -3 -a -i fuzzylines.pyx

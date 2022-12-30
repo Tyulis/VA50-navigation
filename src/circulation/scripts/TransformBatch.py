@@ -21,6 +21,7 @@ class TransformBatchServer(object):
 		self.drop_service = rospy.Service(self.parameters["node"]["drop-service-name"], DropVelocity, self.handle_drop_velocity)
 		
 		self.transform_manager = positioning.TransformManager(self.parameters["transform"]["sim-interval"])
+		
 		if self.parameters["node"]["time-discrepancy"]:
 			self.time_discrepancy_buffer = []
 			self.time_discrepancy = None
@@ -36,11 +37,11 @@ class TransformBatchServer(object):
 		else:
 			rospy.loginfo("Ready")
 	
-	def get_transform(self, source_frame, target_frame):
-		"""Get the latest transform matrix from `source_frame` to `target_frame`
+	def get_rotation(self, source_frame, target_frame):
+		"""Get the latest rotation matrix from `source_frame` to `target_frame`
 		   - source_frame : str           : Name of the source frame
 		   - target_frame : str           : Name of the target frame
-		<---------------- : ndarray[4, 4] : 3D homogeneous transform matrix to convert from `source_frame` to `target_frame`,
+		<---------------- : ndarray[3, 3] : 3D rotation matrix to convert from `source_frame` to `target_frame`,
 		                                    or None if no TF for those frames was published
 		"""
 		try:
@@ -53,14 +54,7 @@ class TransformBatchServer(object):
 		rotation_quaternion = np.asarray((rotation_message.w, rotation_message.x, rotation_message.y, rotation_message.z))
 		rotation_matrix = quaternions.quat2mat(rotation_quaternion)
 		return rotation_matrix
-		translation_message = transform.transform.translation
-		translation_vector = np.asarray((translation_message.x, translation_message.y, translation_message.z)).reshape(3, 1)
 
-		# Build the complete transform matrix
-		return np.concatenate((
-			np.concatenate((rotation_matrix, translation_vector), axis=1),
-			np.asarray((0, 0, 0, 1)).reshape((1, 4))
-		), axis=0)
 
 	def callback_velocity(self, data):
 		if self.time_discrepancy is None:
@@ -89,7 +83,7 @@ class TransformBatchServer(object):
 
 		# Those transforms are from start_time to end_time, expressed in the map frame as the velocity refers to the map frame
 		# So we need to rotate those back to the end_time frame
-		map_transform = self.get_transform(self.parameters["node"]["world-frame"], self.parameters["node"]["road-frame"])
+		map_transform = self.get_rotation(self.parameters["node"]["world-frame"], self.parameters["node"]["road-frame"])
 		for i in range(transforms.shape[0]):
 			transforms[i, :3, 3] = map_transform @ transforms[i, :3, 3]
 			transforms[i, :3, :3] = map_transform @ transforms[i, :3, :3] @ map_transform.T
