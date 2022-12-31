@@ -200,6 +200,9 @@ class TrajectoryExtractorNode (object):
 		if self.transform_service is None or self.drop_service is None:
 			return
 		
+		if self.is_panic():
+			return
+		
 		# Extract the image and the timestamp at which it was taken, critical for synchronisation
 		rospy.loginfo("------ Received an image")
 		image = np.frombuffer(message.data, dtype=np.uint8).reshape((message.height, message.width, 3))
@@ -418,7 +421,7 @@ class TrajectoryExtractorNode (object):
 				# The intersection does not allow the chosen direction : go forth, keep for next time
 				if not self.next_direction & type_consensus:
 					if type_consensus & RoadNetwork.FORWARD:
-						self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp)
+						self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp, intersection_distance)
 					else:
 						# Only left or right, no direction chosen -> wait for input
 						self.switch_panic(NavigationMode.PANIC_NO_DIRECTION)
@@ -489,6 +492,9 @@ class TrajectoryExtractorNode (object):
 			rospy.logerr(exc)
 		# TODO : STOP THE CAR
 	
+	def is_panic(self):
+		return 500 <= self.navigation_mode.value < 600
+	
 	#                         ╔══════════════════╗                          #
 	# ════════════════════════╣ IMAGE PROCESSING ╠═════════════════════════ #
 	#                         ╚══════════════════╝                          #
@@ -523,7 +529,6 @@ class TrajectoryExtractorNode (object):
 
 		# Edge detection to get the 1-pixel wide continuous curves required by the following operations
 		be_binary = cv.Canny(be_binary, 50, 100)
-		cv.imwrite("test.png", be_binary)
 		return birdeye, be_binary, scale_factor
 	
 	# ══════════════════════════ LANE DETECTION ═══════════════════════════ #
@@ -836,7 +841,7 @@ class TrajectoryExtractorNode (object):
 					cv.drawMarker(viz, viz_points[:, i], (125, 255, int(right_estimate_scores[i]*255)), cv.MARKER_CROSS, 4)  # Blue
 		else:
 			right_estimate = None
-
+		
 		# If only one estimate is valid, use it directly, otherwise compile the trajectory from both estimates
 		if left_estimate is not None:
 			if right_estimate is not None:

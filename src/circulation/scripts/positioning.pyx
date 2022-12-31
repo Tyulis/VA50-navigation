@@ -45,7 +45,7 @@ cdef class TransformManager:
 		                             Shorter is better but slower. Leaving this higher than 0.01 is likely to lead to very poor results"""
 		self.sim_interval = sim_interval
 
-	def add_velocity(self, double time, (double, double, double) linear, (double, double, double) angular):
+	def add_velocity(self, double time, double[:] linear, double[:] angular):
 		"""Add a velocity to the buffers
 		   - time    : double                   : Timestamp at which the velocity was captured, in seconds with decimal part
 		   - linear  : (double, double, double) : Linear speed along axes X, Y, Z
@@ -247,7 +247,6 @@ cdef class TransformManager:
 		# As always, we are in reverse so -=
 		# It *is* (end_time + start_time) next to the acceleration, it’s because here (end_time² - start_time²) got factored into (end_time - start_time)(end_time + start_time)
 		# and we need to subtract 2*period_start as it needs to be relative to period_start
-		cdef Vector3 save = Vector3(x=translation.x, y=translation.y, z=translation.z)
 		translation.x -= (end_time - start_time) * (linear_start.x + (end_time + start_time - 2*period_start) * (linear_end.x-linear_start.x) / (2*(period_end - period_start)))
 		translation.y -= (end_time - start_time) * (linear_start.y + (end_time + start_time - 2*period_start) * (linear_end.y-linear_start.y) / (2*(period_end - period_start)))
 		translation.z -= (end_time - start_time) * (linear_start.z + (end_time + start_time - 2*period_start) * (linear_end.z-linear_start.z) / (2*(period_end - period_start)))

@@ -12,7 +12,7 @@ from libcpp.vector cimport vector
 cdef bint pca_2x2(double[:, :] points, double[2] eigenvalues, double[2][2] eigenvectors) noexcept:
 	"""Fast 2D PCA transform matrix computation (at least, a lot faster than numpy)
 	   The algorithms are mostly pulled from here : https://en.wikipedia.org/wiki/Eigenvalue_algorithm#2.C3.972_matrices
-	   - points       : double[2, N] : Points of which to eigendecompose
+	   - points       : double[2, N] : Points to compute the PCA of
 	   - eigenvalues  : double[2]    : Output for the eigenvalues, sorted by descending magnitude
 	   - eigenvectors : double[2][2] : Output for the eigenvectors, as column vectors corresponding to the respective `eigenvalues`
 	<------------------ bool         : True if the eigendecomposition was successful, False otherwise
@@ -30,6 +30,7 @@ cdef bint pca_2x2(double[:, :] points, double[2] eigenvalues, double[2][2] eigen
 	mean[0] /= points.shape[1]
 	mean[1] /= points.shape[1]
 	
+	# No need for the symmetrical value at covariance[1, 0]
 	for i in range(points.shape[1]):
 		covariance[0][0] += (points[0, i] - mean[0])**2
 		covariance[1][1] += (points[1, i] - mean[1])**2
@@ -78,7 +79,7 @@ cdef void inverse_2x2(double[2][2] matrix, double[2][2] inverse) noexcept nogil:
 	inverse[1][0] = -matrix[1][0] / determinant
 	inverse[1][1] = matrix[0][0] / determinant
 
-# TODO : Own implementation of the k-d tree, bruteforce method as there should not be too many points ?
+# TODO : Own implementation of the k-d tree ?
 cdef void cluster_DBSCAN(double[:, :] data, long[:] labels, double epsilon, long min_samples):
 	"""Perform a DBSCAN clustering of the given data points, a lot faster than sklearn
 	   - data : double[N, k] : Data points as LINE VECTORS of `k` features
@@ -131,8 +132,8 @@ cdef void cluster_DBSCAN(double[:, :] data, long[:] labels, double epsilon, long
 cdef vector[Py_ssize_t] compact_array(double[:, :] array, bint[:] mask) noexcept nogil:
 	"""Push the relevant element of the array contiguously at the front, based on a mask
 	   The elements after the last relevant item are undefined
-	   - array : double[:, :] : Array of vectors to compact, regardless of the vector dimension
-	   - mask  : bool[:]      : Mask, with 1 at the indices of items to keep, and 0 for those to remove
+	   - array : double[:, :]       : Array of vectors to compact, regardless of the vector dimension
+	   - mask  : bool[:]            : Mask, with 1 at the indices of items to keep, and 0 for those to remove
 	<----------- vector<Py_ssize_t> : Index mapping from the compacted array to its former state
 	                                  For instance, index `n` in the compacted array was formerly at index `return_value[n]`"""
 	cdef vector[Py_ssize_t] indices

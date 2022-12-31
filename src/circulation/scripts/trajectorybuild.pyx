@@ -110,9 +110,6 @@ def line_parameters(list lines, double lane_width, double main_angle, double mai
 	left_main_point = [main_point[0] - expected_vector[1]*lane_width/2, main_point[1] + expected_vector[0]*lane_width/2]
 	right_main_point = [main_point[0] + expected_vector[1]*lane_width/2, main_point[1] - expected_vector[0]*lane_width/2]
 
-	print("A", main_angle, main_angle_distance, expected_vector)
-	print(left_main_point, main_point, right_main_point)
-
 	# Now, calculate the parameters for each curve
 	for i in range(nlines):
 		line_view = lines[i]

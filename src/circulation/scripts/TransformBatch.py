@@ -37,6 +37,17 @@ class TransformBatchServer(object):
 		else:
 			rospy.loginfo("Ready")
 	
+	def callback_velocity(self, data):
+		if self.time_discrepancy is None:
+			self.time_discrepancy_buffer.append(rospy.get_rostime() - data.header.stamp)
+			if len(self.time_discrepancy_buffer) > 5:
+				self.time_discrepancy = self.time_discrepancy_buffer[-1]
+				rospy.loginfo(f"Time discrepancy estimation done ({self.time_discrepancy}), ready to receive requests")
+		else:
+			linear_vector = np.asarray((data.twist.linear.x, data.twist.linear.y, data.twist.linear.z)).reshape(-1, 1)
+			angular_vector = np.asarray((data.twist.angular.x, data.twist.angular.y, data.twist.angular.z)).reshape(-1, 1)
+			self.transform_manager.add_velocity((data.header.stamp + self.time_discrepancy).to_sec(), linear_vector.flatten(), angular_vector.flatten())
+		
 	def get_rotation(self, source_frame, target_frame):
 		"""Get the latest rotation matrix from `source_frame` to `target_frame`
 		   - source_frame : str           : Name of the source frame
@@ -54,18 +65,6 @@ class TransformBatchServer(object):
 		rotation_quaternion = np.asarray((rotation_message.w, rotation_message.x, rotation_message.y, rotation_message.z))
 		rotation_matrix = quaternions.quat2mat(rotation_quaternion)
 		return rotation_matrix
-
-
-	def callback_velocity(self, data):
-		if self.time_discrepancy is None:
-			self.time_discrepancy_buffer.append(rospy.get_rostime() - data.header.stamp)
-			if len(self.time_discrepancy_buffer) > 5:
-				self.time_discrepancy = self.time_discrepancy_buffer[-1]
-				rospy.loginfo(f"Time discrepancy estimation done ({self.time_discrepancy}), ready to receive requests")
-		else:
-			self.transform_manager.add_velocity((data.header.stamp + self.time_discrepancy).to_sec(),
-			                                    (data.twist.linear.x, data.twist.linear.y, data.twist.linear.z),
-				                                (data.twist.angular.x, data.twist.angular.y, data.twist.angular.z))
 	
 	def handle_transform_batch(self, request):
 		if request.unbias:
