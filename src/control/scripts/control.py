@@ -139,7 +139,7 @@ class PurePursuitController (object):
 
         traffic_sign_data = data.data
         traffic_sign_label, distance = traffic_sign_data.split(';')
-        distance = int(distance)
+        distance = float(distance)
 
         # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
         if traffic_sign_label == 'Stop' or traffic_sign_label == 'Yield':
@@ -198,6 +198,7 @@ class PurePursuitController (object):
     def speed_control(self):
         """Control the speed of the car and adapt speed when stop is needed"""
         if self.is_stop_need:
+            print('STOP')
             if self.current_stop_index < len(self.speeds_to_stop):
                 vi = self.speeds_to_stop[self.current_stop_index]
                 self.current_stop_index += 1

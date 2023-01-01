@@ -33,6 +33,7 @@ if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cythonize -3 -a -i trajectorybuild.pyx
 	cd ../../..
 
+	cp src/circulation/scripts/trajutil*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/trajeometry*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/fish2bird*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/linetrack*.so devel/lib/python3/dist-packages/
