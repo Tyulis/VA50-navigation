@@ -230,9 +230,10 @@ def next_point(double[:] point, double[:, :] curve, double target_distance, bint
 	else:
 		return np.asarray((result.x, result.y))
 	
-cdef (_NextPoint, double) _next_point_score(double[:] point, double[:, :] curve, double[:] scores, double target_distance, bint extend, Py_ssize_t min_index):
+cdef (_NextPoint, double) _next_point_score(Py_ssize_t closest_index, double vector_factor, double[:, :] curve, double[:] scores, double target_distance, bint extend, Py_ssize_t min_index):
 	"""Find a point along the curve that is `target_distance` further than the projection of (point_x, point_y) on the curve, along its given order
-	   - point           : double[2]    : Initial point
+	   - closest_index   : Py_ssize_t   : Index of the initial point on the curve
+	   - vector_factor   : double       : Portion of the outgoing vector of the given index on the curve to add to get the initial point
 	   - curve           : double[2, N] : Numerical curve to follow
 	   - target_distance : double       : Distance from the projection of the initial point to the result
 	   - extend          : bool         : Stay valid even when the initial point is before the first sample of the curve
@@ -241,14 +242,7 @@ cdef (_NextPoint, double) _next_point_score(double[:] point, double[:, :] curve,
 	<--------------------- double       : Score of the resulting point, taking into account the surrounding samples when it is in-between two samples
 	                                      If the initial point projection is before the first sample of the curve and `extend` is False, or if the resulting point is beyond the last sample of the curve, return both invalid
 	"""
-	# First take the closest point on the curve to the initial point
-	cdef _ProjectionIndex projection = _project_on_curve_index(point[0], point[1], curve, extend, min_index)
-	
-	# The extension shenanigans are handled entirely by _project_on_curve_index, just fail when it fails
-	if projection.index < 0:
-		return (_NextPoint(x=NAN, y=NAN, index=-1, vector_factor=NAN), NAN)
-
-	cdef _NextPoint result = _next_point(projection.index, projection.vector_factor, curve, target_distance)
+	cdef _NextPoint result = _next_point(closest_index, vector_factor, curve, target_distance)
 	if result.index < 0:
 		return (result, NAN)
 	else:
@@ -265,13 +259,63 @@ def next_point_score(double[:] point, double[:, :] curve, double[:] scores, doub
 	<--------------------- double       : Score of the resulting point, taking into account the surrounding samples when it is in-between two samples
 	                                      If the initial point projection is before the first sample of the curve and `extend` is False, or if the resulting point is beyond the last sample of the curve, return both None
 	"""
+	# First take the closest point on the curve to the initial point
+	cdef _ProjectionIndex projection = _project_on_curve_index(point[0], point[1], curve, extend, min_index)
+	
+	# The extension shenanigans are handled entirely by _project_on_curve_index, just fail when it fails
+	if projection.index < 0:
+		return (_NextPoint(x=NAN, y=NAN, index=-1, vector_factor=NAN), NAN)
+	
 	cdef _NextPoint result
 	cdef double score
-	result, score = _next_point_score(point, curve, scores, target_distance, extend, min_index)
+	
+	result, score = _next_point_score(projection.index, projection.vector_factor, curve, scores, target_distance, extend, min_index)
 	if result.index < 0:
 		return None, None, None
 	else:
 		return np.asarray((result.x, result.y)), score, result.index
+
+cpdef _ProjectionIndex project_from(double[:] point, double[:] vector, double[:, :] target_curve, bint extend, Py_ssize_t min_index):
+	"""« Project » a point from the segment it belongs to, to another curve
+	   The vector from the original point and its projection is orthogonal to the segment of origin, not to the target curve
+	   Return the first intersection in the order of the target curve, not particularly the closest to the original point
+	   - point        : double[2]        : Point to project
+	   - vector       : double[2]        : The projection must be on the orthogonal vector to this relative to the point
+	   - target_curve : double[2, N]     : Curve to project onto
+	   - extend       : bool             : Stay valid even when the intersection is before the first sample of the curve
+	   - min_index    : Py_ssize_t       : Do not search before that index on the curve
+	<------------------ _ProjectionIndex : Result of the projection, as (index, interpolation)
+	                                       If no valid intersection was found, return .index = -1 and .vector_factor = NAN
+	"""
+	cdef Py_ssize_t i
+	cdef double check1_x, check1_y, check2_x, check2_y, ortho_x = -vector[1], ortho_y = vector[0]
+	cdef double denominator, interp  #, factor
+	for i in range(min_index, target_curve.shape[1] - 1):
+		check1_x = target_curve[0, i]
+		check1_y = target_curve[1, i]
+		check2_x = target_curve[0, i+1]
+		check2_y = target_curve[1, i+1]
+
+		# Basically, we solve the following vector equation :
+		# point + factor*ortho = (1 - interp)*check1 + interp*check2,
+		# to get the intersection between the orthogonal projecting line and the curve segment line
+		# If the solution is defined and the interpolation factor is in [0, 1], then the intersection is on this segment
+
+		denominator = check1_x*ortho_y - check1_y*ortho_x - check2_x*ortho_y + check2_y*ortho_x
+		# Vector and interpolation factors undefined -> the segment is colinear with the vector, skip
+		if denominator == 0:
+			continue
+
+		# Actually we only need the interpolation factor
+		# factor = (check1_x*check2_y - check1_x*point[1] - check1_y*check2_x + check1_y*point[0] + check2_x*point[1] - check2_y*point[0]) / denominator
+		interp = (check1_x*ortho_y - check1_y*ortho_x - point[0]*ortho_y + point[1]*ortho_x) / denominator
+
+		# Interpolation falls within the actual segment, or before if we’re in extended mode -> found the intersection
+		if (interp >= 0 and interp <= 1) or (i == 0 and interp < 0):
+			return _ProjectionIndex(index=i, vector_factor=interp)
+	# Didn’t find any valid intersection -> fail
+	return _ProjectionIndex(index=-1, vector_factor=NAN)
+	
 
 def resample_curve(double[:, :] curve, double step):
 	"""Resample a curve such that points are (approximately) equidistant

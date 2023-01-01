@@ -146,3 +146,5 @@ src/circulation/scripts/*.ipynb
 src/geometry2/
 src/circulation/scripts/test.py
 *.png
+lane_detection.py
+src/vision_opencv/

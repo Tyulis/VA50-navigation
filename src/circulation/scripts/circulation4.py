@@ -526,6 +526,7 @@ class TrajectoryExtractorNode (object):
 		open_kernel_size = self.parameters["preprocess"]["open-kernel-size"]
 		open_kernel = cv.getStructuringElement(cv.MORPH_RECT, (open_kernel_size, open_kernel_size))
 		be_binary = cv.morphologyEx(be_binary, cv.MORPH_OPEN, open_kernel)
+		cv.imwrite("viz-binary.png", birdeye)
 
 		# Edge detection to get the 1-pixel wide continuous curves required by the following operations
 		be_binary = cv.Canny(be_binary, 50, 100)
@@ -981,7 +982,7 @@ class TrajectoryExtractorNode (object):
 		"""
 		# Transform the trajectory buffer to the local frame
 		local_trajectories, local_scores, target_unbiased = self.localize_trajectories(self.trajectory_buffer, self.trajectory_scores, self.trajectory_timestamps, target_timestamp)
-		
+
 		# Visualization of the per-frame trajectories
 		if viz is not None:
 			for line, line_scores in zip(local_trajectories, local_scores):
@@ -994,6 +995,7 @@ class TrajectoryExtractorNode (object):
 
 		# Smooth it and update the trajectory to be published
 		if compiled_trajectory is not None and compiled_trajectory.size > 0 and compiled_trajectory.shape[1] > 3:
+			compiled_trajectory, compiled_scores = trajeometry.strip_angles(compiled_trajectory, np.pi/2, compiled_scores)
 			self.current_trajectory = trajeometry.savgol_filter(compiled_trajectory, trajeometry.savgol_window(7, compiled_trajectory.shape[1]), 2)
 			self.current_trajectory_timestamp = target_unbiased
 

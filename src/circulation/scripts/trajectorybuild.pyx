@@ -241,6 +241,10 @@ def compile_line(list lines, list scores, double min_score, (double, double) sta
 	cdef double quartile1_index, quartile3_index, quartile1, quartile3, iqr_filter
 	cdef double centroid_score
 	cdef int valid_points
+
+	cdef trajeometry._ProjectionIndex projection_result
+	cdef double[:, :] current_curve
+
 	while True:
 		next_points.clear()
 		next_scores.clear()
@@ -248,10 +252,24 @@ def compile_line(list lines, list scores, double min_score, (double, double) sta
 		centroid_numerator_x = 0
 		centroid_numerator_y = 0
 		centroid_denominator = 0
+
+		if result_points.size() >= 2:
+			previous_vector[0] = result_points.back()[0] - result_points[result_points.size() - 2][0]
+			previous_vector[1] = result_points.back()[1] - result_points[result_points.size() - 2][1]
+
 		for i in range(nlines):
 			# Project the last centroid onto each line and take the point that is `trajectory-step` further along it
 			# We also compute a first estimate of the weighted centroid for the IQR filter
-			next_point, score = trajeometry._next_point_score(last_centroid, lines[i], scores[i], trajectory_step, extend=True, min_index=point_indices[i])
+			current_curve = lines[i]
+			if result_points.size() >= 2:
+				projection_result = trajeometry.project_from(last_centroid, previous_vector, current_curve, extend=True, min_index=point_indices[i])
+			else:
+				projection_result = trajeometry._project_on_curve_index(last_centroid[0], last_centroid[1], current_curve, extend=True, min_index=point_indices[i])
+
+			if projection_result.index < 0:
+				continue	
+			
+			next_point, score = trajeometry._next_point_score(projection_result.index, projection_result.vector_factor, current_curve, scores[i], trajectory_step, extend=True, min_index=point_indices[i])
 			if next_point.index >= 0 and next_point.index >= point_indices[i] and score > min_score:
 				point_indices[i] = next_point.index
 				next_points.push_back((next_point.x, next_point.y))
@@ -338,7 +356,7 @@ def compile_line(list lines, list scores, double min_score, (double, double) sta
 			previous_vector[0] = result_points.back()[0] - result_points[result_points.size() - 2][0]
 			previous_vector[1] = result_points.back()[1] - result_points[result_points.size() - 2][1]
 			if _acos_clip((result_vector[0]*previous_vector[0] + result_vector[1]*previous_vector[1]) / (sqrt(result_vector[0]*result_vector[0] + result_vector[1]*result_vector[1]) * sqrt(previous_vector[0]*previous_vector[0] + previous_vector[1]*previous_vector[1]))) > 2*M_PI/3:
-				rospy.logwarn("Curve compilation convergence (oscillating)")
+				print("Curve compilation convergence (oscillating)")
 				break
 
 		if result_points.size() > 0:
@@ -346,7 +364,7 @@ def compile_line(list lines, list scores, double min_score, (double, double) sta
 
 		# If all else have failed, cut when we attain an inordinate amount of points
 		if result_length > max_expected_length:
-			rospy.logwarn("Curve compilation convergence (unexplained)")
+			print("Curve compilation convergence (unexplained)")
 			break
 
 		result_points.push_back((centroid[0], centroid[1]))
