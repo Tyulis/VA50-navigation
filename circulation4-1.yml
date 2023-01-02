@@ -52,7 +52,7 @@ markings:
   size-tolerance: 0.20
 
 intersection:
-  mode-switch-distance: 0
+  mode-switch-distance: 4
   default-rejoin-distance: 8
   min-turn-radius: 5
   max-turn-radius: 25
