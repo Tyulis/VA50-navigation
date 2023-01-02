@@ -7,7 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import rospy
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, String, UInt8
 from geometry_msgs.msg import TwistStamped
 
 from circulation.msg import TimeBatch, Trajectory
@@ -33,6 +33,7 @@ class PurePursuitController (object):
         self.speed_topic = self.parameters["node"]["speed-topic"]
         self.steering_angle_topic = self.parameters["node"]["steering-angle-topic"]
         self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
+        self.direction_topic = self.parameters["node"]["direction-topic"]
 
         # Speeds obtained from the velocity topic
         self.real_speed = None
@@ -58,6 +59,7 @@ class PurePursuitController (object):
         # Initialize the topic publishers
         self.speed_publisher = rospy.Publisher(self.speed_topic, Float32, queue_size=10)
         self.steering_angle_publisher = rospy.Publisher(self.steering_angle_topic, Float32, queue_size=10)
+        self.direction_publisher = rospy.Publisher(self.direction_topic, UInt8, queue_size=1)
 
         # Initialize the service connections
         rospy.loginfo("Waiting for the TransformBatch service...")
@@ -142,11 +144,22 @@ class PurePursuitController (object):
         distance = float(distance)
 
         # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
-        if traffic_sign_label == 'Stop' or traffic_sign_label == 'Yield':
+        if traffic_sign_label == 'Stop' or traffic_sign_label == 'Yield' or traffic_sign_label == 'No entry':
             self.is_stop_need = True
             nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
             self.speeds_to_stop = np.linspace(start = self.real_speed, stop = 0, num = nb_speed_values_to_stop)
             self.current_stop_index = 0
+
+        # Filter traffic signs where a direction is mandatory and publish on the direction topic
+        if traffic_sign_label == 'Turn right ahead' or traffic_sign_label == 'Keep right':
+            self.direction_publisher.publish(0b0100)
+
+        if traffic_sign_label == 'Turn left ahead' or traffic_sign_label == 'Keep left':
+            self.direction_publisher.publish(0b0010)
+
+        if traffic_sign_label == 'Ahead only':
+            self.direction_publisher.publish(0b0001)
+
 
 
 
