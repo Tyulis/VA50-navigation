@@ -130,8 +130,8 @@ class RoadNetwork (object):
 			if trajeometry.vector_angle(item_vectors[:, -1], branch_vectors[:, 0]) > np.pi/2:
 				branch_vectors = -branch_vectors
 			
-			last_angle = trajeometry.vector_angle(item_vectors[:, -1], branch_vectors[:, branch_vectors.shape[1]//2])
-			if item_vectors[0, -1]*branch_vectors[1, branch_vectors.shape[1]//2] - item_vectors[1, -1]*branch_vectors[0, branch_vectors.shape[1]//2] < 0:
+			last_angle = trajeometry.vector_angle(item_vectors[:, -1], branch_vectors[:, -1])
+			if item_vectors[0, -1]*branch_vectors[1, -1] - item_vectors[1, -1]*branch_vectors[0, -1] < 0:
 				last_angle = -last_angle
 			following_angles.append(last_angle)
 		following_angles.sort()

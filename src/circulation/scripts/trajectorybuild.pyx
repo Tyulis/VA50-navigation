@@ -185,7 +185,7 @@ def line_parameters(list lines, double lane_width, double main_angle, double mai
 				vector2_y = shortest_line[1, projection.index+1] - shortest_line[1, projection.index]
 				
 				anglediff += abs(_acos_clip((vector1_x*vector2_x + vector1_y*vector2_y) / (sqrt(vector1_x*vector1_x + vector1_y*vector1_y) * sqrt(vector2_x*vector2_x + vector2_y*vector2_y))))
-				paralleldiff += abs(sqrt((longest_line[0, p] - shortest_line[0, projection.index])**2 + (longest_line[1, p] - shortest_line[1, projection.index])**2) - lane_width) / lane_width
+				paralleldiff += abs(sqrt((longest_line[0, p] - (shortest_line[0, projection.index] + vector2_x*projection.vector_factor))**2 + (longest_line[1, p] - (shortest_line[1, projection.index] + vector2_y*projection.vector_factor))**2) - lane_width) / lane_width
 				valid_points += 1
 			
 			if valid_points == 0:
