@@ -217,6 +217,8 @@ class PurePursuitController (object):
                 self.current_stop_index += 1
             else:
                 vi = 0
+                rospy.sleep(2)
+                self.is_stop_need = False
         else:
             vi = self.state.v + self.Kp * (self.target_speed - self.state.v)
 
