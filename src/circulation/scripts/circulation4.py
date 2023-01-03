@@ -971,7 +971,7 @@ class TrajectoryExtractorNode (object):
 		trajectory_radius = marking_radius + self.parameters["environment"]["lane-width"] / 2
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
 		angles = np.arange(0, np.pi/2, angle_step)
-		self.current_trajectory = np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + marking_radius + intersection_distance))
+		self.current_trajectory = np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + self.parameters["environment"]["lane-width"] + intersection_distance))
 		self.current_trajectory_timestamp = image_timestamp
 	
 	# ═══════════════════ FINAL TRAJECTORY CONSTRUCTION ═══════════════════ #

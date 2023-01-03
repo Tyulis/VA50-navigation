@@ -1,0 +1,109 @@
+node:
+  trajectory-node-name: trajectory
+  transform-node-name: transform_batch_server
+
+  image-topic: /forwardCamera/image_raw
+  camerainfo-topic: /forwardCamera/camera_info
+  velocity-topic: /ZOE2UTBM/car/velocity
+  trajectory-topic: /navigation/trajectory
+  direction-topic: /navigation/direction
+  pointcloud-topic: /lidar
+  traffic-sign-topic: /traffic_sign
+  speed-topic: /ZOE2UTBM/control/speed
+  steering-angle-topic: /ZOE2UTBM/control/steering_angle
+
+  transform-service-name: /circulation/TransformBatch
+  drop-service-name: /circulation/DropVelocity
+
+  road-frame: base_link
+  world-frame: map
+
+  visualize: true
+  time-discrepancy: false
+
+transform:
+  sim-interval: 0.005
+
+control:
+  target-speed: 10.0
+  k: 0.1
+  Lfc: 5.0
+  Kp: 0.5
+  dt: 0.1
+  WB: 2.588
+
+environment:
+  lane-width: 3.5
+  crosswalk-width: 0.5
+
+birdeye:
+  x-range: 15
+  y-range: 21.8
+  roi-y: 4.8
+  birdeye-size: 500
+
+preprocess:
+  threshold-window: 33
+  threshold-bias: -5
+  open-kernel-size: 4
+  close-kernel-size: 5
+
+markings:
+  size-tolerance: 0.20
+
+intersection:
+  mode-switch-distance: 3
+  default-rejoin-distance: 8
+  min-turn-radius: 5
+  max-turn-radius: 25
+
+trajectory:
+  history-size: 15
+
+  line-reliability-range: 22
+  line-reliability-dampening: 3
+  line-reliability-extension-penalty: 1.8
+
+  trajectory-step: 0.5
+  trajectory-range: 15
+  trajectory-start: 0
+  line-score-threshold: 0.5
+  trajectory-score-threshold: 0.5
+
+find-lines-parameters:
+  savgol_degree: 2
+  initial_filter_window: 25
+  smoothing_filter_window: 9
+  branch_step: 10
+  min_branch_length: 8
+  min_line_length: 35
+  max_curvature_metric: 1
+  curvature_filter_size: 9
+  curvature_filter_deviation: 1
+  merge_max_distance: 140
+  estimate_start: 1
+  estimate_end: 8
+  max_angle_diff: 0.86
+  max_rmse: 2
+
+fuzzy-lines:
+  local-area-x: 5
+  local-area-y: 10
+  base-score: 4
+  centers:
+    forward-distance: [4.8, 10.8, 21.8]
+    line-distance: [0, 0.5, 2]
+    line-lengths: [10, 5, 0.0]
+    parallel-distances: [0, 0.3, 1]
+    parallel-angles: [0, 0.51, 1.24]
+    output: [0, 0.25, 0.5, 0.8, 1]
+  malus:
+    forward-distance: [0, -1, -3]
+    line-distance: [0, -2, -3]
+    line-lengths: [0, -1, -2]
+    parallel-distances: [0, -2, -5]
+    parallel-angles: [0, -1, -5]
+  lane-selection-threshold: 0.7
+  single-line-selection-threshold: 0.6
+  vertical-angle-tolerance: 0.5
+  main-angle-cut: 0.43
