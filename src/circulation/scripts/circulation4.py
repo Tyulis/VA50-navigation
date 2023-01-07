@@ -915,19 +915,16 @@ class TrajectoryExtractorNode (object):
 		marking_curvature = curvatures[np.argmax(curvature_density)]
 
 		# The curvature is in rad/m, so just take its inverse to get the curvature radius
-		marking_radius = 1 / marking_curvature
+		trajectory_radius = 1 / marking_curvature
 
 		# If it’s obviously wrong, clip it to default values
 		# This won’t do much good, but well, let’s see where it goes and if it’s really awful we’ll make it panic
-		if marking_radius < self.parameters["intersection"]["min-turn-radius"]:
-			rospy.logwarn(f"Absurdly small curve radius found ({marking_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
-			marking_radius = self.parameters["intersection"]["min-turn-radius"]
-		if marking_radius > self.parameters["intersection"]["max-turn-radius"]:
-			rospy.logwarn(f"Absurdly large curve radius found ({marking_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
-			marking_radius = self.parameters["intersection"]["max-turn-radius"]
-
-		# The actual trajectory is a half lane width further
-		trajectory_radius = marking_radius + self.parameters["environment"]["lane-width"] / 2
+		if trajectory_radius < self.parameters["intersection"]["min-turn-radius"]:
+			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["min-turn-radius"]
+		if trajectory_radius > self.parameters["intersection"]["max-turn-radius"]:
+			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["max-turn-radius"]
 
 		# And from that, compute the trajectory as a quarter circle to the right with that radius
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
@@ -960,15 +957,14 @@ class TrajectoryExtractorNode (object):
 		curvature_density = density_model.score_samples(curvatures.reshape(-1, 1))
 		marking_curvature = curvatures[np.argmax(curvature_density)]
 
-		marking_radius = 1 / marking_curvature
-		if marking_radius < self.parameters["intersection"]["min-turn-radius"]:
-			rospy.logwarn(f"Absurdly small curve radius found ({marking_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
-			marking_radius = self.parameters["intersection"]["min-turn-radius"]
-		if marking_radius > self.parameters["intersection"]["max-turn-radius"]:
-			rospy.logwarn(f"Absurdly large curve radius found ({marking_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
-			marking_radius = self.parameters["intersection"]["max-turn-radius"]
+		trajectory_radius = 1 / marking_curvature
+		if trajectory_radius < self.parameters["intersection"]["min-turn-radius"]:
+			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["min-turn-radius"]
+		if trajectory_radius > self.parameters["intersection"]["max-turn-radius"]:
+			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["max-turn-radius"]
 
-		trajectory_radius = marking_radius + self.parameters["environment"]["lane-width"] / 2
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
 		angles = np.arange(0, np.pi/2, angle_step)
 		self.current_trajectory = np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + self.parameters["environment"]["lane-width"] + intersection_distance))
