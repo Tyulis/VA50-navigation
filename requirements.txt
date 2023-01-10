@@ -5,4 +5,5 @@ opencv-contrib-python>=4.6.0.66
 Cython>=0.29.32
 transforms3d>=0.4.1
 scikit-image>=0.17.2
+protobuf>=3.19.6
 tensorflow>=2.6.2
