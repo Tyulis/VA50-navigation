@@ -5,16 +5,18 @@ import yaml
 import cv2 as cv
 import numpy as np
 import transforms3d.quaternions as quaternions
+from sklearn.neighbors import KernelDensity
 
 import rospy
 import tf2_ros
 import ros_numpy
-from std_msgs.msg import String
+from std_msgs.msg import Header
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 
 import fish2bird
 from circulation.msg import TimeBatch
 from circulation.srv import TransformBatch, TransformBatchRequest
+from trafficsigns.msg import TrafficSign, TrafficSignStatus
 
 from traffic_sign_detection import TrafficSignDetector
 
@@ -32,13 +34,9 @@ class DistanceExtractor (object):
 		self.pointcloud_topic = self.parameters["node"]["pointcloud-topic"]
 		self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
 
-		# Initialize the topic subscribers
-		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
-		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
-		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
-
 		# Initialize the topic publisher
-		self.traffic_sign_publisher = rospy.Publisher(self.traffic_sign_topic, String, queue_size=10)
+		self.traffic_sign_publisher = rospy.Publisher(self.traffic_sign_topic, TrafficSignStatus, queue_size=10)
+		self.status_seq = 0
 		
 		# Initialize the transformation listener
 		self.tf_buffer = tf2_ros.Buffer(rospy.Duration(120))
@@ -56,6 +54,7 @@ class DistanceExtractor (object):
 		self.pointcloud_array = []
 		self.pointcloud_stamp_array = []
 		self.lidar_to_camera = None
+		self.lidar_to_baselink = None
 		self.distortion_parameters = None
 		self.camera_to_image = None
 		self.image_stamp = None
@@ -66,6 +65,11 @@ class DistanceExtractor (object):
 		self.transform_service = None
 		rospy.wait_for_service(self.parameters["node"]["transform-service-name"])
 		self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
+
+		# Initialize the topic subscribers
+		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
+		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
+		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
 
 		rospy.loginfo("Everything ready")
 
@@ -95,11 +99,11 @@ class DistanceExtractor (object):
 		return transforms, start_times_unbiased, end_time_unbiased
 	
 
-	def update_transforms(self):
+	def get_transform(self, source_frame, target_frame):
 		"""Update the lidar-to-camera transform matrix from the tf topic"""
 		try:
 			# It’s lookup_transform(target_frame, source_frame, …) !!!
-			transform = self.tf_buffer.lookup_transform(self.image_frame, self.pointcloud_frame, rospy.Time(0))
+			transform = self.tf_buffer.lookup_transform(target_frame, source_frame, rospy.Time(0))
 		except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
 			return
 
@@ -111,7 +115,7 @@ class DistanceExtractor (object):
 		translation_vector = np.asarray((translation_message.x, translation_message.y, translation_message.z)).reshape(3, 1)
 		
 		# Build the complete transform matrix
-		self.lidar_to_camera = np.concatenate((
+		return np.concatenate((
 			np.concatenate((rotation_matrix, translation_vector), axis=1),
 			np.asarray((0, 0, 0, 1)).reshape((1, 4))
 		), axis=0)
@@ -119,7 +123,9 @@ class DistanceExtractor (object):
 
 	def callback_image(self, data):
 		"""Extract an image from the camera"""
-		# rospy.loginfo("Received an image")
+		if self.transform_service is None and len(self.pointcloud_stamp_array) > 0:
+			return
+		
 		self.image_frame = data.header.frame_id
 		self.image_stamp = data.header.stamp
 		self.latest_image = np.frombuffer(data.data, dtype=np.uint8).reshape((data.height, data.width, 3))
@@ -129,7 +135,9 @@ class DistanceExtractor (object):
 
 	def callback_pointcloud(self, data):
 		"""Extract a point cloud from the lidar"""
-		# rospy.loginfo("Received a point cloud")
+		if self.transform_service is None:
+			return
+
 		self.pointcloud_frame = data.header.frame_id
 		self.pointcloud_stamp = data.header.stamp
 
@@ -159,7 +167,6 @@ class DistanceExtractor (object):
 	def lidar_to_image(self, pointcloud):
 		return fish2bird.target_to_image(pointcloud, self.lidar_to_camera, self.camera_to_image, self.distortion_parameters[0])
 
-
 	def convert_pointcloud(self):
 		"""Superimpose a point cloud from the lidar onto an image from the camera and publish the distance to the traffic sign bounding box on the topic"""
 		# If some info is missing, can’t output an image
@@ -168,7 +175,8 @@ class DistanceExtractor (object):
 			self.camera_to_image is None or self.traffic_sign_detector is None):
 			return
 
-		self.update_transforms()
+		self.lidar_to_camera = self.get_transform(self.pointcloud_frame, self.image_frame)
+		self.lidar_to_baselink = self.get_transform(self.pointcloud_frame, self.parameters["node"]["road-frame"])
 
 		pointcloud = self.pointcloud_array[0]
 		pointcloud_stamp = self.pointcloud_stamp_array[0]
@@ -194,47 +202,54 @@ class DistanceExtractor (object):
 		# Get the annotated image and detected traffic signs labels and coordinates
 		img, traffic_signs = self.traffic_sign_detector.get_traffic_signs(img)
 
-		# If at least one traffic sign is detected
-		if len(traffic_signs) >= 0:
-
-			traffic_sign_distances = np.zeros((len(traffic_signs), 1))
-			nb_distances = np.zeros((len(traffic_signs), 1))
-
-			# Write all points to the final image
-			i=0
-			for distance, point,  in zip(distances, lidar_coordinates_in_image.T):
+		# Visualize the lidar data projection onto the image
+		for i, point in enumerate(lidar_coordinates_in_image.T):
 				# Filter out points that are not in the image dimension or behind the camera
-				if 0 <= point[0] < img.shape[1] and 0 <= point[1] < img.shape[0] and camera_pointcloud[2,i]>=0:
+				if 0 <= point[0] < img.shape[1] and 0 <= point[1] < img.shape[0] and camera_pointcloud[2, i] >=0:
 					cv.circle(img, (int(point[0]), int(point[1])), 1, (0, 255, 0), -1)
-					j=0
-					for traffic_sign in traffic_signs:
-						label, x, y, w, h = traffic_sign
-						# Filter out points that are not in the traffic sign bounding box
-						if x <= point[0] < x+w and y <= point[1] < y+h:
-							nb_distances[j] += 1
-							traffic_sign_distances[j] += distance
-						j+=1
-				i+=1
 
-			# Computes the mean of all distances (lidar points projected in the bounding box) from each traffic sign
-			traffic_sign_distances = traffic_sign_distances / nb_distances
+		# If at least one traffic sign is detected
+		if len(traffic_signs) > 0:
+			message = TrafficSignStatus()
+			message.header = Header(seq=self.status_seq, stamp=img_stamp, frame_id=self.parameters["node"]["road-frame"])
+			self.status_seq += 1
+			sign_messages = []
 
-			# Publish on topic and display distances of each traffic sign
-			for traffic_sign, distance in zip(traffic_signs, traffic_sign_distances):
-				label, x, y, w, h = traffic_sign
+			for sign in traffic_signs:
+				result = TrafficSign()
+				result.category = sign.category
+				result.type = sign.type
+				result.confidence = sign.confidence
 
-				distance = round(distance[0],2)
+				relevant_points_filter = ((sign.x <= lidar_coordinates_in_image[0]) & (lidar_coordinates_in_image[0] <= sign.x + sign.width) &
+		    					          (sign.y <= lidar_coordinates_in_image[1]) & (lidar_coordinates_in_image[1] <= sign.y + sign.height))
+				relevant_points = pointcloud[:, relevant_points_filter]
+				
+				# We can still publish that we’ve seen it just in case, but we have no information on its position whatsoever
+				if relevant_points.shape[1] == 0:
+					result.x = np.nan
+					result.y = np.nan
+					result.z = np.nan
+				else:
+					# Maximum density estimation to disregard the points that might be in the hitbox but physically behind the sign
+					baselink_points = self.lidar_to_baselink @ relevant_points
+					density_model = KernelDensity(kernel="epanechnikov", bandwidth=np.linalg.norm([sign.width, sign.height]) / 2)
+					density_model.fit(baselink_points.T)
+					point_density = density_model.score_samples(baselink_points.T)
+					position_estimate = baselink_points[:, np.argmax(point_density)]
 
-				img = cv.putText(img, 'd = '+str(distance)+' m', (x, y-25), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
-
-				if 30 > distance > 0:
-					string_to_publish = label + ';' + str(distance)
-					self.traffic_sign_publisher.publish(string_to_publish)
-
-				print(label)
+					result.x = position_estimate[0]
+					result.y = position_estimate[1]
+					result.z = position_estimate[2]
+				
+					img = cv.putText(img, f'd = {np.linalg.norm(position_estimate)} m', (sign.x, sign.y-25), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 2)
+				
+				sign_messages.append(result)
+			message.traffic_signs = sign_messages
+			self.traffic_sign_publisher.publish(message)
 		
 		img = cv.cvtColor(self.latest_image, cv.COLOR_BGR2RGB)
-		cv.imshow('image', img)
+		cv.imshow('viz', img)
 
 		cv.waitKey(5)
 

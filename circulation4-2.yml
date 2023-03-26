@@ -8,7 +8,7 @@ node:
   trajectory-topic: /navigation/trajectory
   direction-topic: /navigation/direction
   pointcloud-topic: /lidar
-  traffic-sign-topic: /traffic_sign
+  traffic-sign-topic: /navigation/traffic_sign
   speed-topic: /ZOE2UTBM/control/speed
   steering-angle-topic: /ZOE2UTBM/control/steering_angle
 

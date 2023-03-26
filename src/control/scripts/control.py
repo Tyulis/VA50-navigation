@@ -12,6 +12,7 @@ from geometry_msgs.msg import TwistStamped
 
 from circulation.msg import TimeBatch, Trajectory
 from circulation.srv import TransformBatch, TransformBatchRequest
+from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
 
 RATE = 10 # Hz
@@ -54,7 +55,7 @@ class PurePursuitController (object):
         # Initialize the topic subscribers
         self.velocity_subscriber = rospy.Subscriber(self.velocity_topic, TwistStamped, self.callback_velocity)
         self.trajectory_subscriber = rospy.Subscriber(self.trajectory_topic, Trajectory, self.callback_trajectory)
-        self.traffic_sign_subscriber = rospy.Subscriber(self.traffic_sign_topic, String, self.callback_traffic_sign)
+        self.traffic_sign_subscriber = rospy.Subscriber(self.traffic_sign_topic, TrafficSignStatus, self.callback_traffic_sign)
 
         # Initialize the topic publishers
         self.speed_publisher = rospy.Publisher(self.speed_topic, Float32, queue_size=10)
@@ -139,28 +140,26 @@ class PurePursuitController (object):
         """Callback called when a new traffic sign is detected and received in the traffic sign topic"""
         rospy.loginfo("Received a new traffic sign")
 
-        traffic_sign_data = data.data
-        traffic_sign_label, distance = traffic_sign_data.split(';')
-        distance = float(distance)
+        for sign in data.traffic_signs:
+            # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
+            if sign.type in ('stop', 'yield', 'no-entry'):
+                position = np.c_[[sign.x, sign.y, sign.z, 1]]
+                transforms, _, _ = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
+                current_position = transforms[0] @ position
+                distance = np.linalg.norm(current_position[:2])
 
-        # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
-        if traffic_sign_label == 'Stop' or traffic_sign_label == 'Yield' or traffic_sign_label == 'No entry':
-            self.is_stop_need = True
-            nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
-            self.speeds_to_stop = np.linspace(start = self.real_speed, stop = 0, num = nb_speed_values_to_stop)
-            self.current_stop_index = 0
+                self.is_stop_need = True
+                nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
+                self.speeds_to_stop = np.linspace(start = self.real_speed, stop = 0, num = nb_speed_values_to_stop)
+                self.current_stop_index = 0
 
-        # Filter traffic signs where a direction is mandatory and publish on the direction topic
-        if traffic_sign_label == 'Turn right ahead' or traffic_sign_label == 'Keep right':
-            self.direction_publisher.publish(0b0100)
-
-        if traffic_sign_label == 'Turn left ahead' or traffic_sign_label == 'Keep left':
-            self.direction_publisher.publish(0b0010)
-
-        if traffic_sign_label == 'Ahead only':
-            self.direction_publisher.publish(0b0001)
-
-
+            # Filter traffic signs where a direction is mandatory and publish on the direction topic
+            elif sign.type in ('right-only', 'keep-right'):
+                self.direction_publisher.publish(0b0100)
+            elif sign.type in ('left-only', 'keep-left'):
+                self.direction_publisher.publish(0b0010)
+            elif sign.type == 'ahead-only':
+                self.direction_publisher.publish(0b0001)
 
 
     def plot_arrow(self, x, y, yaw, length=1.0, width=0.5, fc="r", ec="self.k"):

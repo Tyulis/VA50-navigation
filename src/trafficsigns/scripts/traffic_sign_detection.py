@@ -1,5 +1,6 @@
 import cv2 as cv
 import numpy as np
+from collections import namedtuple
 from skimage import exposure
 from keras.models import load_model
 
@@ -8,50 +9,99 @@ GLOBAL_LABELS = ['prohibitory',
                 'mandatory',
                 'other']
 
-SPECIFIC_LABELS = ['Speed limit (20km/h)',
-                'Speed limit (30km/h)', 
-                'Speed limit (50km/h)', 
-                'Speed limit (60km/h)', 
-                'Speed limit (70km/h)', 
-                'Speed limit (80km/h)', 
-                'End of speed limit (80km/h)', 
-                'Speed limit (100km/h)', 
-                'Speed limit (120km/h)', 
-                'No passing', 
-                'No passing veh over 3.5 tons', 
-                'Right-of-way at intersection', 
-                'Priority road', 
-                'Yield', 
-                'Stop', 
-                'No vehicles', 
-                'Veh > 3.5 tons prohibited', 
-                'No entry', 
-                'General caution', 
-                'Dangerous curve left', 
-                'Dangerous curve right', 
-                'Double curve', 
-                'Bumpy road', 
-                'Slippery road', 
-                'Road narrows on the right', 
-                'Road work', 
-                'Traffic signals', 
-                'Pedestrians', 
-                'Children crossing', 
-                'Bicycles crossing', 
-                'Beware of ice/snow',
-                'Wild animals crossing', 
-                'End speed + passing limits', 
-                'Turn right ahead', 
-                'Turn left ahead', 
-                'Ahead only', 
-                'Go straight or right', 
-                'Go straight or left', 
-                'Keep right', 
-                'Keep left', 
-                'Roundabout mandatory', 
-                'End of no passing', 
-                'End no passing veh > 3.5 tons' 
-               ]
+SIGN_TYPES_IDS = [
+    'speed-20',
+    'speed-30', 
+    'speed-50', 
+    'speed-60', 
+    'speed-70', 
+    'speed-80', 
+    'end-speed-80', 
+    'speed-100', 
+    'speed-120', 
+    'no-passing', 
+    'no-passing-3ton5', 
+    'punctual-priority', 
+    'road-priority', 
+    'yield', 
+    'stop', 
+    'no-vehicles', 
+    'no-vehicles-3ton5', 
+    'no-entry', 
+    'caution', 
+    'dangerous-curve-left', 
+    'dangerous-curve-right', 
+    'double-curve', 
+    'bumpy-road', 
+    'slippery-road', 
+    'road-narrows-right', 
+    'road-work', 
+    'traffic-signals', 
+    'pedestrians', 
+    'children-crossing', 
+    'bicycles-crossing', 
+    'danger-ice-snow',
+    'wild-animals-crossing', 
+    'end-speed-no-passing', 
+    'right-only', 
+    'left-only', 
+    'ahead-only', 
+    'straight-right-only', 
+    'straight-left-only', 
+    'keep-right', 
+    'keep-left', 
+    'roundabout', 
+    'end-no-passing', 
+    'end-no-passing-3ton5' 
+]
+
+SPECIFIC_LABELS = [
+    'Speed limit (20km/h)',
+    'Speed limit (30km/h)', 
+    'Speed limit (50km/h)', 
+    'Speed limit (60km/h)', 
+    'Speed limit (70km/h)', 
+    'Speed limit (80km/h)', 
+    'End of speed limit (80km/h)', 
+    'Speed limit (100km/h)', 
+    'Speed limit (120km/h)', 
+    'No passing', 
+    'No passing veh over 3.5 tons', 
+    'Right-of-way at intersection', 
+    'Priority road', 
+    'Yield', 
+    'Stop', 
+    'No vehicles', 
+    'Veh > 3.5 tons prohibited', 
+    'No entry', 
+    'General caution', 
+    'Dangerous curve left', 
+    'Dangerous curve right', 
+    'Double curve', 
+    'Bumpy road', 
+    'Slippery road', 
+    'Road narrows on the right', 
+    'Road work', 
+    'Traffic signals', 
+    'Pedestrians', 
+    'Children crossing', 
+    'Bicycles crossing', 
+    'Beware of ice/snow',
+    'Wild animals crossing', 
+    'End speed + passing limits', 
+    'Turn right ahead', 
+    'Turn left ahead', 
+    'Ahead only', 
+    'Go straight or right', 
+    'Go straight or left', 
+    'Keep right', 
+    'Keep left', 
+    'Roundabout mandatory', 
+    'End of no passing', 
+    'End no passing veh > 3.5 tons' 
+]
+
+TrafficSign = namedtuple("TrafficSign", "category type label x y width height confidence")
 
 
 class TrafficSignDetector(object):
@@ -67,7 +117,6 @@ class TrafficSignDetector(object):
 
 
     def get_traffic_signs(self, img):
-
         # Detecting objects (YOLO)
         blob = cv.dnn.blobFromImage(img, 0.00392, (416, 416), (0, 0, 0), True, crop=False)
         self.yolov4_model.setInput(blob)
@@ -113,9 +162,11 @@ class TrafficSignDetector(object):
                     
                     prediction = self.recognition_model.predict(np.array([img_norm]))
                     
-                    label_specific = SPECIFIC_LABELS[np.argmax(prediction[0])]
+                    selected_type = np.argmax(prediction[0])
+                    label_specific = SPECIFIC_LABELS[selected_type]
 
-                    traffic_signs.append((label_specific, x, y, w, h))
+                    traffic_signs.append(TrafficSign(category=GLOBAL_LABELS[class_ids[i]], type=SIGN_TYPES_IDS[selected_type], label=label_specific,
+                                                     x=x, y=y, width=w, height=h, confidence=confidences[i]))
                     
                     img = cv.putText(img, label_specific, (x, y-10), self.font, 0.5, (0,0,255), 2)
                     
