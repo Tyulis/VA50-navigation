@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import cProfile
 
 import yaml
 import cv2 as cv
@@ -131,6 +132,7 @@ class DistanceExtractor (object):
 		self.latest_image = np.frombuffer(data.data, dtype=np.uint8).reshape((data.height, data.width, 3))
 		if self.image_stamp >= self.pointcloud_stamp_array[0]:
 			self.convert_pointcloud()
+			#cProfile.runctx("self.convert_pointcloud()", globals(), locals())
 
 
 	def callback_pointcloud(self, data):
@@ -178,7 +180,7 @@ class DistanceExtractor (object):
 		self.lidar_to_camera = self.get_transform(self.pointcloud_frame, self.image_frame)
 		self.lidar_to_baselink = self.get_transform(self.pointcloud_frame, self.parameters["node"]["road-frame"])
 
-		pointcloud = self.pointcloud_array[0]
+		pointcloud = np.ascontiguousarray(self.pointcloud_array[0])
 		pointcloud_stamp = self.pointcloud_stamp_array[0]
 		img = self.latest_image
 		img_stamp = self.image_stamp

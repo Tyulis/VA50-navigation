@@ -25,6 +25,7 @@ import cv2 as cv
 import numpy as np
 import transforms3d.quaternions as quaternions
 from sklearn.neighbors import KernelDensity
+from sklearn.cluster import DBSCAN
 
 # ══════════════════════════════ ROS IMPORTS ══════════════════════════════ #
 import rospy
@@ -33,6 +34,7 @@ from std_msgs.msg import UInt8, Float64MultiArray, MultiArrayDimension, Header
 from sensor_msgs.msg import Image, CameraInfo
 from circulation.srv import TransformBatch, TransformBatchRequest, DropVelocity, DropVelocityRequest
 from circulation.msg import TimeBatch, Trajectory
+from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
 # ═══════════════════════ CYTHON EXTENSION MODULES ════════════════════════ #
 import linetrack
@@ -40,12 +42,24 @@ import trajeometry
 import fish2bird
 import fuzzylines
 import trajectorybuild
-from roadnet import RoadNetwork
 
 # TODO : More resilient lane detection
 # TODO : Autonomous intersection detection
 # TODO : No direction panic mode
 # TODO : Ensure a better base point continuity in trajectories
+
+
+INTERSECTION_SIGNS = ( 
+    'yield', 
+    'stop', 
+    'right-only', 
+    'left-only', 
+    'ahead-only', 
+    'straight-right-only', 
+    'straight-left-only', 
+    'keep-right', 
+    'keep-left',
+)
 
 
 class NavigationMode (enum.Enum):
@@ -57,6 +71,12 @@ class NavigationMode (enum.Enum):
 	PANIC_UNSUPPORTED = 501
 	PANIC_EXCEPTION = 502
 	PANIC_NO_DIRECTION = 510
+
+class Direction:
+	DEAD_END = 0b0000
+	FORWARD = 0b0001
+	LEFT = 0b0010
+	RIGHT = 0b0100
 
 class TrajectoryVisualizer (object):
 	"""Quick-and-dirty visualization window management
@@ -108,6 +128,46 @@ class TrajectoryVisualizer (object):
 		cv.waitKey(1)
 
 
+class IntersectionHint (object):
+	"""Hold the position and informations about anything that may indicate an intersection"""
+
+	def __init__(self, category, type, position, timestamp, confidence):
+		self.category = category
+		self.type = type
+		self.positions = [position]
+		self.position_timestamps = [timestamp]
+		self.confidences = [confidence]
+	
+	def merge(self, hint):
+		self.positions.extend(hint.positions)
+		self.position_timestamps.extend(hint.position_timestamp)
+		self.confidences.extend(hint.confidences)
+	
+	def confidence(self):
+		return 1 - np.sqrt(np.sum((1 - self.confidences)**2)) / len(self.confidences)
+
+	def direction_hint(self):
+		if self.category != "trafficsign":
+			return Direction.FORWARD | Direction.LEFT | Direction.RIGHT
+
+		if self.type in ("right-only", "keep-right"):
+			return Direction.RIGHT
+		elif self.type in ("left-only", "keep-left"):
+			return Direction.LEFT
+		elif self.type == "ahead-only":
+			return Direction.FORWARD
+		elif self.type == "straight-left-only":
+			return Direction.FORWARD | Direction.LEFT
+		elif self.type == "straight-right-only":
+			return Direction.FORWARD | Direction.RIGHT
+		else:
+			return Direction.FORWARD | Direction.LEFT | Direction.RIGHT
+
+	def __hash__(self):
+		return id(self)
+		
+
+
 class TrajectoryExtractorNode (object):
 	"""Main class for the ROS node that manages the trajectory"""
 
@@ -115,13 +175,11 @@ class TrajectoryExtractorNode (object):
 	# ═══════════════════════╣    INITIALISATION    ╠══════════════════════ #
 	#                        ╚══════════════════════╝                       #
 
-	def __init__(self, parameters, road_network):
+	def __init__(self, parameters):
 		"""Initialize the node and everything that it needs
 		   - parameters   : dict<str: …>        : Node parameters, from the parameter file
-		   - road_network : roadnet.RoadNetwork : Road mapping backend, only used to estimate where the intersections are
 		"""
 		self.parameters = parameters
-		self.road_network = road_network
 
 		# Trajectory history buffers
 		self.trajectory_buffer = []                   # History of trajectories estimated from individual frames
@@ -157,10 +215,8 @@ class TrajectoryExtractorNode (object):
 		self.last_gps_transform = None
 
 		# Intersection management
-		self.next_direction = RoadNetwork.FORWARD
-		self.intersection_type_buffer = []
-		self.intersection_distance_buffer = []
-		self.intersection_timestamp_buffer = []
+		self.next_direction = Direction.FORWARD
+		self.intersection_hints = []
 
 		# Initialize the service connections
 		rospy.loginfo("Waiting for the TransformBatch service...")
@@ -175,6 +231,7 @@ class TrajectoryExtractorNode (object):
 		self.image_subscriber = rospy.Subscriber(self.parameters["node"]["image-topic"], Image, self.callback_image, queue_size=1, buff_size=2**28, tcp_nodelay=True)
 		self.camerainfo_subscriber = rospy.Subscriber(self.parameters["node"]["camerainfo-topic"], CameraInfo, self.callback_camerainfo, queue_size=1)
 		self.direction_subscriber = rospy.Subscriber(self.parameters["node"]["direction-topic"], UInt8, self.callback_direction)
+		self.trafficsign_subscriber = rospy.Subscriber(self.parameters["node"]["traffic-sign-topic"], TrafficSignStatus, self.callback_trafficsign)
 		self.trajectory_publisher = rospy.Publisher(self.parameters["node"]["trajectory-topic"], Trajectory, queue_size=10)
 		self.trajectory_seq = 0  # Sequential number of published trajectories
 
@@ -222,19 +279,27 @@ class TrajectoryExtractorNode (object):
 	
 	def callback_direction(self, message):
 		"""Callback called when a direction is sent from the navigation nodes
-		   - message : std_msgs.msg.Uint8 : Message with the direction (same values as RoadNetwork.FORWARD, .LEFT and .RIGHT)
+		   - message : std_msgs.msg.Uint8 : Message with the direction (same values as Direction.FORWARD, .LEFT and .RIGHT)
 		"""
-		if message.data == RoadNetwork.FORWARD:
+		if message.data == Direction.FORWARD:
 			rospy.loginfo("Updated next direction to FORWARD")
-		elif message.data == RoadNetwork.LEFT:
+		elif message.data == Direction.LEFT:
 			rospy.loginfo("Updated next direction to LEFT")
-		elif message.data == RoadNetwork.RIGHT:
+		elif message.data == Direction.RIGHT:
 			rospy.loginfo("Updated next direction to RIGHT")
 		else:
 			rospy.logerr(f"Invalid direction ID received : {message.data}")
 			return
 		self.next_direction = message.data
 	
+	def callback_trafficsign(self, message):
+		"""Callback called when traffic signs are detected and received
+		   - message : trafficsigns.msg.TrafficSignStatus : Message with the detected traffic signs data
+		"""
+		for trafficsign in message.traffic_signs:
+			if trafficsign.type in INTERSECTION_SIGNS and trafficsign.confidence > 0.6:
+				self.add_intersection_hint(IntersectionHint("trafficsign", trafficsign.type, (trafficsign.x, trafficsign.y, trafficsign.z), message.header.stamp, trafficsign.confidence))
+
 	#               ╔═══════════════════════════════════════╗               #
 	# ══════════════╣ TRANSFORM MANAGEMENT AND MEASUREMENTS ╠══════════════ #
 	#               ╚═══════════════════════════════════════╝               #
@@ -325,59 +390,7 @@ class TrajectoryExtractorNode (object):
 				self.drop_service.close()
 				self.drop_service = rospy.ServiceProxy(self.parameters["node"]["drop-service-name"], DropVelocity, persistent=True)
 				tries += 1
-	
-	def measure_next_intersection(self, image_timestamp):
-		"""Get the latest informations about the next intersection, and add them to the history buffers
-		   Currently, also handle the "average GPS simulation" from ultra-accurate TFs to the map frame
-		   - image_timestamp : rospy.Time : Time about which the data must be extracted
-		"""
-		# Take TFs at intervals of 1 second, to simulate a low-frequency input
-		if self.last_gps_transform is None or self.last_gps_timestamp < image_timestamp - rospy.Duration(1):
-			try:
-				transform = self.tf_buffer.lookup_transform(self.parameters["node"]["world-frame"], self.parameters["node"]["road-frame"], image_timestamp)
-			except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-				return None, None
 
-			# Build the matrix elements from the translation vector and the rotation quaternion like get_transform, but add some noise
-			# Add some normal-distributed noise in the angle about the Z axis (the only one really relevant here)
-			rotation_message = transform.transform.rotation
-			rotation_quaternion = np.asarray((rotation_message.w, rotation_message.x, rotation_message.y, rotation_message.z + self.gps_rng.normal(0, np.pi/6)))
-			rotation_matrix = quaternions.quat2mat(rotation_quaternion)
-
-			# And noise in the translation vector
-			# Two "modes" are applied randomly : either the position sticks to the last one or overshoots it, like often in smartphone-like GPS,
-			# or just apply some random normal-distributed noise about the X and Y axes
-			# The US government (gps.gov) claims GPS accuracy within a radius of 4.9m for GPS-enabled smartphones under a clear sky,
-			# so let’s throw in some more and make it σ = 5 (95% of measures within a 10 meters radius)
-			translation_message = transform.transform.translation
-			translation_vector = np.asarray((translation_message.x, translation_message.y, translation_message.z)).reshape(3, 1)
-			if self.gps_rng.uniform() < 0.25 and self.last_gps_transform is not None:
-				factor = self.gps_rng.normal(0.65, 0.3)
-				translation_vector = self.last_gps_transform[:3, 3].reshape(3, 1) + (translation_vector - self.last_gps_transform[:3, 3].reshape(3, 1)) * factor
-			else:
-				translation_vector[:2, :] += self.gps_rng.normal(0, 5, (2, 1))
-
-			# Build the complete transform matrix
-			self.last_gps_transform = np.concatenate((
-				np.concatenate((rotation_matrix, translation_vector), axis=1),
-				np.asarray((0, 0, 0, 1)).reshape((1, 4))
-			), axis=0)
-			self.last_gps_timestamp = transform.header.stamp
-		
-		# Get the current position and a position 1m ahead in the map frame (to have the current position and current vector)
-		reference_points = (self.last_gps_transform @ np.asarray(((0, 0, 0, 1), (0, 1, 0, 1))).transpose())[:2]
-		current_position = reference_points[:, 0]
-		current_vector = reference_points[:, 1] - reference_points[:, 0]
-
-		# Estimate the available directions and distance to the next intersection from the position and vector on the map
-		directions, distance = self.road_network.nearby_intersection(current_position, current_vector)
-		rospy.loginfo(f"Next intersection in {distance:.2f} meters, {'LEFT ' if directions & RoadNetwork.LEFT else ''}{'FORWARD ' if directions & RoadNetwork.FORWARD else ''}{'RIGHT' if directions & RoadNetwork.RIGHT else ''}")
-
-		# Add the direction flags, estimated distance and measurement timestamp to the history buffers
-		self.intersection_type_buffer.append(directions)
-		self.intersection_distance_buffer.append(distance)
-		self.intersection_timestamp_buffer.append(image_timestamp)
-	
 	def distance_till_rejoin(self, image_timestamp):
 		"""In intersection navigation modes, the vehicle follows a predetermined trajectory,
 		   then tries to catch the new lane to follow after some distance stored in `self.rejoin_distance`
@@ -392,6 +405,72 @@ class TrajectoryExtractorNode (object):
 	#                 ╔═══════════════════════════════════╗                 #
 	# ════════════════╣ NAVIGATION MODE SWITCH PROCEDURES ╠════════════════ #
 	#                 ╚═══════════════════════════════════╝                 #
+
+	def match_intersection_hint(self, existing_hint, hint):
+		if hint.category != existing_hint.category:
+			return False
+		elif hint.type != existing_hint.type:
+			return False
+		
+		transforms, _, _ = self.get_map_transforms(existing_hint.position_timestamps, hint.position_timestamps[-1])
+		existing_positions = np.asarray([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, existing_hint.positions)])[:2]
+		existing_centroid = np.mean(existing_positions, axis=1)
+		hint_position = np.asarray(hint.positions[-1])
+		if np.linalg.norm(existing_centroid - hint_position) < self.parameters["intersection"]["intersection-hint-match-threshold"][hint.category]:
+			return True
+
+	def add_intersection_hint(self, hint):
+		for existing_hint in self.intersection_hints:
+			if self.match_intersection_hint(existing_hint, hint):
+				existing_hint.merge(hint)
+				break
+		else:
+			self.intersection_hints.append(hint)
+	
+	def next_intersection(self, image_timestamp):
+		if len(self.intersection_hints) == 0:
+			return None, None
+
+		hint_indices = []
+		hint_positions = []
+		hint_timestamps = []
+		for i, hint in enumerate(self.intersection_hints):
+			hint_positions.extend(hint.positions)
+			hint_indices.extend([i] * len(hint.positions))
+			hint_timestamps.extend(hint.position_timestamps)
+		
+		if len(hint_positions) == 0:
+			return None, None
+		
+		transforms, _, _ = self.get_map_transforms(hint_timestamps, image_timestamp)
+
+		# Project everything onto the current directional vector (0, 1, 0) in local coordinates
+		current_distances = np.hstack([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, hint_positions)])[1]
+		
+		# Disregard points that are behind the vehicle
+		forward_filter = np.nonzero(current_distances >= 0)[0]
+		current_distances = current_distances[forward_filter]
+		hint_indices = [index for i, index in enumerate(hint_indices) if i in forward_filter]
+		
+		if len(current_distances) <= 2:
+			selected_index = np.argmin(current_distances)
+			hint = self.intersection_hints[hint_indices[selected_index]]
+			return current_distances[selected_index], hint.direction_hint()
+		
+		labels = DBSCAN(eps=2, min_samples=2).fit_predict(current_distances.reshape(-1, 1))
+		if np.max(labels) < 0:
+			selected_index = np.argmin(current_distances)
+			hint = self.intersection_hints[hint_indices[selected_index]]
+			return current_distances[selected_index], hint.direction_hint()
+		
+		cluster_distances = [np.mean(current_distances[labels == label]) for label in np.sort(np.unique(labels)) if label >= 0]
+		selected_cluster = np.argmin(cluster_distances)
+		hints = {self.intersection_hints[hint_indices[index]] for index in np.nonzero(labels == selected_cluster)[0]}
+		direction_hint = Direction.FORWARD | Direction.LEFT | Direction.RIGHT
+		for hint in hints:
+			direction_hint &= hint.direction_hint()
+		return cluster_distances[selected_cluster], direction_hint
+		
 	
 	def update_intersection(self, image_timestamp):
 		"""Take a measurement and update the next intersection estimate based on all the measurements in the history buffers,
@@ -401,37 +480,27 @@ class TrajectoryExtractorNode (object):
 		# Don’t estimate the next intersection if the vehicle is already on an intersection
 		if self.navigation_mode != NavigationMode.CRUISE:
 			return
-		
-		self.measure_next_intersection(image_timestamp)
-		
-		# Vote on the available directions at the next intersection (simple majority), and only keep the right measurements
-		type_consensus, _ = Counter(self.intersection_type_buffer).most_common(1)[0]
-		valid_distances = [distance for i, distance in enumerate(self.intersection_distance_buffer) if self.intersection_type_buffer[i] == type_consensus]
-		valid_timestamps = [timestamp for i, timestamp in enumerate(self.intersection_timestamp_buffer) if self.intersection_type_buffer[i] == type_consensus]
 
-		# Estimate the distance to the next intersection based on those valid measurements (simple mean)
-		transforms, _, _ = self.get_map_transforms(valid_timestamps, image_timestamp)
-		transform_distances = np.linalg.norm(transforms[:, :3, 3], axis=1)
-		current_distances = np.asarray(valid_distances) - transform_distances
-		intersection_distance = np.mean(current_distances)
+		intersection_distance, intersection_directions = self.next_intersection(image_timestamp)
+		rospy.loginfo(f"Next intersection : distance = {intersection_distance}, directions = {bin(intersection_directions) if intersection_directions is not None else None}")
 
 		# Close enough to the intersection, switch navigation mode
-		if intersection_distance < self.parameters["intersection"]["mode-switch-distance"]:
+		if intersection_distance is not None and intersection_distance < self.parameters["intersection"]["mode-switch-distance"]:
 			try:
 				# The intersection does not allow the chosen direction : go forth, keep for next time
-				if not self.next_direction & type_consensus:
-					if type_consensus & RoadNetwork.FORWARD:
+				if not self.next_direction & intersection_directions:
+					if intersection_directions & Direction.FORWARD:
 						self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp, intersection_distance)
 					else:
 						# Only left or right, no direction chosen -> wait for input
 						self.switch_panic(NavigationMode.PANIC_NO_DIRECTION)
 				
 				# Switch to the relevant intersection mode
-				elif self.next_direction == RoadNetwork.LEFT:
+				elif self.next_direction == Direction.LEFT:
 					self.switch_intersection(NavigationMode.LEFT_TURN, image_timestamp, intersection_distance)
-				elif self.next_direction == RoadNetwork.RIGHT:
+				elif self.next_direction == Direction.RIGHT:
 					self.switch_intersection(NavigationMode.RIGHT_TURN, image_timestamp, intersection_distance)
-				elif self.next_direction == RoadNetwork.FORWARD:
+				elif self.next_direction == Direction.FORWARD:
 					self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp, intersection_distance)
 			except Exception as exc:
 				self.switch_panic(NavigationMode.PANIC_EXCEPTION, exc)
@@ -439,7 +508,7 @@ class TrajectoryExtractorNode (object):
 	def switch_cruise(self):
 		"""Switch to cruise navigation mode"""
 		self.navigation_mode = NavigationMode.CRUISE
-		self.next_direction = RoadNetwork.FORWARD  # Go forward by default
+		self.next_direction = Direction.FORWARD  # Go forward by default
 		rospy.loginfo(f"Switching navigation mode : {self.navigation_mode}")
 	
 	def switch_intersection(self, navigation_mode, image_timestamp, intersection_distance):
@@ -458,10 +527,8 @@ class TrajectoryExtractorNode (object):
 		elif self.navigation_mode == NavigationMode.LEFT_TURN:
 			self.build_left_turn_trajectory(image_timestamp, intersection_distance)
 		
-		# Clear the intersection estimation buffers for next time
-		self.intersection_type_buffer.clear()
-		self.intersection_distance_buffer.clear()
-		self.intersection_timestamp_buffer.clear()
+		# Clear the intersection hints for next time
+		self.intersection_hints.clear()
 
 		# Clear the trajectory buffers, the old trajectories won’t be relevant anymore after the intersection
 		self.trajectory_buffer.clear()
@@ -526,7 +593,6 @@ class TrajectoryExtractorNode (object):
 		open_kernel_size = self.parameters["preprocess"]["open-kernel-size"]
 		open_kernel = cv.getStructuringElement(cv.MORPH_RECT, (open_kernel_size, open_kernel_size))
 		be_binary = cv.morphologyEx(be_binary, cv.MORPH_OPEN, open_kernel)
-		cv.imwrite("viz-binary.png", birdeye)
 
 		# Edge detection to get the 1-pixel wide continuous curves required by the following operations
 		be_binary = cv.Canny(be_binary, 50, 100)
@@ -567,14 +633,15 @@ class TrajectoryExtractorNode (object):
 		angle_density = density_model.score_samples(angles.reshape(-1, 1))
 		return angles[np.argmax(angle_density)]
 
-	def detect_lane(self, be_binary, scale_factor):
+	def detect_lane(self, be_binary, scale_factor, image_timestamp):
 		"""Find the best candidate for the current lane
-		   - be_binary    : ndarray[y, x] : Preprocessed bird-eye view
-		   - scale_factor : float         : Scale factor from pixel to metric
-		<------------------ ndarray[2, L] : Left line as a discrete curve in pixel coordinates, or None
-		<------------------ ndarray[2, R] : Right line as a discrete curve in pixel coordinates, or None (both can be defined or None at the same time)
-		<------------------ float         : Reliability score of the left line in [0, 1], or None
-		<------------------ float         : Reliability score of the right line in [0, 1], or None
+		   - be_binary       : ndarray[y, x] : Preprocessed bird-eye view
+		   - scale_factor    : float         : Scale factor from pixel to metric
+		   - image_timestamp : rospy.Time    : Timestamp at which the image was captured
+		<--------------------- ndarray[2, L] : Left line as a discrete curve in pixel coordinates, or None
+		<--------------------- ndarray[2, R] : Right line as a discrete curve in pixel coordinates, or None (both can be defined or None at the same time)
+		<--------------------- float         : Reliability score of the left line in [0, 1], or None
+		<--------------------- float         : Reliability score of the right line in [0, 1], or None
 		"""
 		# Build the current parameters of the filter_lines function
 		parameters = self.parameters["find-lines-parameters"].copy()
@@ -590,6 +657,13 @@ class TrajectoryExtractorNode (object):
 			return None, None, None, None
 		
 		markings, branches = trajectorybuild.find_markings(be_binary.shape, branches, scale_factor, self.parameters["environment"]["crosswalk-width"], self.parameters["markings"]["size-tolerance"])
+		for crosswalk in markings["crosswalks"]:
+			if len(crosswalk) >= 3:
+				target_bands = [self.birdeye_to_target(be_binary, band) for band in crosswalk]
+				band_centroids = np.asarray([np.mean(band, axis=1) for band in target_bands])
+				crosswalk_centroid = np.concatenate((np.mean(band_centroids, axis=0), [0]))
+				self.add_intersection_hint(IntersectionHint("marking", "crosswalk", crosswalk_centroid, image_timestamp, 1))
+
 		lines = linetrack.filter_lines(branches, **parameters)
 
 		# Flip the lines so that they start at the bottom of the image,
@@ -1094,7 +1168,7 @@ class TrajectoryExtractorNode (object):
 
 		# In cruise mode or intersect mode when the vehicle needs to catch the new lane, go further
 		if must_detect_trajectory:
-			left_line, right_line, left_line_score, right_line_score = self.detect_lane(be_binary, scale_factor)
+			left_line, right_line, left_line_score, right_line_score = self.detect_lane(be_binary, scale_factor, timestamp)
 
 			# In intersection mode, if a new full lane has been found, catch it and go back to cruise 
 			if self.navigation_mode in (NavigationMode.FORWARD_SKIP, NavigationMode.LEFT_TURN, NavigationMode.RIGHT_TURN):
@@ -1136,15 +1210,14 @@ if __name__ == "__main__":
 	# I’m fed up with scientific notation
 	np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-	if len(sys.argv) < 3:
-		print(f"Usage : {sys.argv[0]} <parameter-file> <map-file>")
+	if len(sys.argv) < 2:
+		print(f"Usage : {sys.argv[0]} <parameter-file>")
 	else:
 		# Load the parameters and map
 		with open(sys.argv[1], "r") as parameterfile:
 			parameters = yaml.load(parameterfile, yaml.Loader)
-		road_network = RoadNetwork(sys.argv[2])
 
 		# Initialize and start the node
 		rospy.init_node(parameters["node"]["trajectory-node-name"])
-		node = TrajectoryExtractorNode(parameters, road_network)
+		node = TrajectoryExtractorNode(parameters)
 		rospy.spin()

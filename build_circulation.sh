@@ -1,5 +1,11 @@
 #!/bin/bash
 
+if [[ $1 == clean ]]; then
+	cd src/circulation/scripts
+	make clean
+	cd ../../..
+fi
+
 if [[ $1 == init ]] || [[ $2 == init ]] || [[ $3 == init ]]; then
 	python3 -m pip install -r requirements.txt
 	if [ ! -d src/geometry2 ]; then
@@ -24,13 +30,14 @@ fi
 
 if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cd src/circulation/scripts
-	cythonize -3 -a -i trajeometry.pyx
-	cythonize -3 -a -i trajutil.pyx
-	cythonize -3 -a -i fish2bird.pyx
-	cythonize -3 -a -i linetrack.pyx
-	cythonize -3 -a -i fuzzylines.pyx
-	cythonize -3 -a -i positioning.pyx
-	cythonize -3 -a -i trajectorybuild.pyx
+	make all
+	#cythonize -3 -a -i trajeometry.pyx
+	#cythonize -3 -a -i trajutil.pyx
+	#cythonize -3 -a -i fish2bird.pyx
+	#cythonize -3 -a -i linetrack.pyx
+	#cythonize -3 -a -i fuzzylines.pyx
+	#cythonize -3 -a -i positioning.pyx
+	#cythonize -3 -a -i trajectorybuild.pyx
 	cd ../../..
 
 	cp src/circulation/scripts/trajutil*.so devel/lib/python3/dist-packages/

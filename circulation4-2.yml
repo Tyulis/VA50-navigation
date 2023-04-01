@@ -52,6 +52,9 @@ markings:
   size-tolerance: 0.20
 
 intersection:
+  intersection-hint-match-threshold:
+    trafficsign: 1
+    marking: 3.85
   mode-switch-distance: 3
   default-rejoin-distance: 8
   min-turn-radius: 5
