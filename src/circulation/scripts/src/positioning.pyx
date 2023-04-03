@@ -182,7 +182,6 @@ cdef class TransformManager:
 		
 		# At this point, we have stored all of our transformations in the linear and angular transformation buffers
 		# Now, let’s build transformation matrices out of them
-
 		transforms = np.empty((nstarts, 4, 4))
 		cdef double[:, :, :] transforms_view = transforms
 		cdef double s

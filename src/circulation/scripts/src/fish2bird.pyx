@@ -441,12 +441,12 @@ def target_to_image(double[:, ::1] target_points, double[:, ::1] target_to_camer
 	image_points = np.empty((2, target_points.shape[1]))
 	cdef double[:, ::1] image_points_data = image_points
 	
-	#IF CUDA_ENABLED:
-	#	if target_points.shape[1] > TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE:
-	#		_target_to_image_cuda(target_points.shape[1], &target_points[0][0], &image_points_data[0][0], &target_to_camera[0][0], &camera_to_image[0][0], xi)
-	#	else:
-	#		_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
-	#ELSE:
-	_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
+	IF CUDA_ENABLED:
+		if target_points.shape[1] > TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE:
+			_target_to_image_cuda(target_points.shape[1], &target_points[0][0], &image_points_data[0][0], &target_to_camera[0][0], &camera_to_image[0][0], xi)
+		else:
+			_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
+	ELSE:
+		_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
 
 	return image_points

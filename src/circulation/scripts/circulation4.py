@@ -32,8 +32,9 @@ import rospy
 import tf2_ros
 from std_msgs.msg import UInt8, Float64MultiArray, MultiArrayDimension, Header
 from sensor_msgs.msg import Image, CameraInfo
-from circulation.srv import TransformBatch, TransformBatchRequest, DropVelocity, DropVelocityRequest
-from circulation.msg import TimeBatch, Trajectory
+from transformtrack.srv import TransformBatch, TransformBatchRequest, DropVelocity, DropVelocityRequest
+from transformtrack.msg import TimeBatch
+from circulation.msg import Trajectory
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
 # ═══════════════════════ CYTHON EXTENSION MODULES ════════════════════════ #
@@ -363,9 +364,9 @@ class TrajectoryExtractorNode (object):
 				tries += 1
 		
 		# The call was successful, get the transforms in the right format and return
-		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size)
-		start_times_unbiased = response.timestamps.start_times
-		end_time_unbiased = response.timestamps.end_time
+		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
+		start_times_unbiased = start_times  # response.timestamps.start_times
+		end_time_unbiased = end_time  # response.timestamps.end_time
 		return transforms, start_times_unbiased, end_time_unbiased
 	
 	def drop_velocity(self, end_time):

@@ -1,4 +1,5 @@
 #include <cuda.h>
+#include <stdio.h>
 
 
 
@@ -9,7 +10,7 @@ __global__ void ker_target_to_image(int num_points, double* target_points, doubl
 
 	// Copy the transforms to shared memory
 	if (threadIdx.x < 16)
-		sh_target_to_camera[threadIdx.x >> 2][threadIdx.x & 0x03] = target_to_camera[threadIdx.x];
+		sh_target_to_camera[threadIdx.x / 4][threadIdx.x % 4] = target_to_camera[threadIdx.x];
 	else if (threadIdx.x < 25)
 		sh_camera_to_image[(threadIdx.x - 16) / 3][(threadIdx.x - 16) % 3] = camera_to_image[threadIdx.x - 16];
 	__syncthreads();
@@ -51,7 +52,7 @@ void _target_to_image_cuda(int num_points, double* target_points, double* image_
 	double* dev_target_points = dev_buffer;
 	double* dev_image_points = &dev_target_points[3*num_points];
 	double* dev_target_to_camera = &dev_image_points[2*num_points];
-	double* dev_camera_to_image = &dev_image_points[4*4];
+	double* dev_camera_to_image = &dev_target_to_camera[4*4];
 
 	cudaMemcpy(dev_target_points, target_points, sizeof(double) * 3*num_points, cudaMemcpyHostToDevice);
 	cudaMemcpy(dev_target_to_camera, target_to_camera, sizeof(double) * 4*4, cudaMemcpyHostToDevice);
