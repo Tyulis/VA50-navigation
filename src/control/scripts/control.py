@@ -10,8 +10,9 @@ import rospy
 from std_msgs.msg import Float32, String, UInt8
 from geometry_msgs.msg import TwistStamped
 
-from circulation.msg import TimeBatch, Trajectory
-from circulation.srv import TransformBatch, TransformBatchRequest
+from circulation.msg import Trajectory
+from transformtrack.msg import TimeBatch
+from transformtrack.srv import TransformBatch, TransformBatchRequest
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
 
@@ -32,6 +33,7 @@ class PurePursuitController (object):
         self.velocity_topic = self.parameters["node"]["velocity-topic"]
         self.trajectory_topic = self.parameters["node"]["trajectory-topic"]
         self.speed_topic = self.parameters["node"]["speed-topic"]
+        self.speed_cap_topic = self.parameters["node"]["speed-cap-topic"]
         self.steering_angle_topic = self.parameters["node"]["steering-angle-topic"]
         self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
         self.direction_topic = self.parameters["node"]["direction-topic"]
@@ -52,6 +54,12 @@ class PurePursuitController (object):
         # Conserve all the states in memory
         # self.states = States()
 
+        # Initialize the service connections
+        rospy.loginfo("Waiting for the TransformBatch service...")
+        self.transform_service = None
+        rospy.wait_for_service(self.parameters["node"]["transform-service-name"])
+        self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
+
         # Initialize the topic subscribers
         self.velocity_subscriber = rospy.Subscriber(self.velocity_topic, TwistStamped, self.callback_velocity)
         self.trajectory_subscriber = rospy.Subscriber(self.trajectory_topic, Trajectory, self.callback_trajectory)
@@ -61,12 +69,7 @@ class PurePursuitController (object):
         self.speed_publisher = rospy.Publisher(self.speed_topic, Float32, queue_size=10)
         self.steering_angle_publisher = rospy.Publisher(self.steering_angle_topic, Float32, queue_size=10)
         self.direction_publisher = rospy.Publisher(self.direction_topic, UInt8, queue_size=1)
-
-        # Initialize the service connections
-        rospy.loginfo("Waiting for the TransformBatch service...")
-        self.transform_service = None
-        rospy.wait_for_service(self.parameters["node"]["transform-service-name"])
-        self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
+        self.speed_cap_publisher = rospy.Publisher(self.speed_cap_topic, Float32, queue_size=10)
 
         rospy.loginfo("Everything ready")
 
@@ -90,9 +93,9 @@ class PurePursuitController (object):
                 self.transform_service.close()
                 self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
                 tries += 1
-        transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size)
-        start_times_unbiased = response.timestamps.start_times
-        end_time_unbiased = response.timestamps.end_time
+        transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
+        start_times_unbiased = start_times  #response.timestamps.start_times
+        end_time_unbiased = end_time  #response.timestamps.end_time
         return transforms, start_times_unbiased, end_time_unbiased
 
 
@@ -144,9 +147,12 @@ class PurePursuitController (object):
             # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
             if sign.type in ('stop', 'yield', 'no-entry'):
                 position = np.c_[[sign.x, sign.y, sign.z, 1]]
+                print(f"position={position.flatten()}")
                 transforms, _, _ = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
                 current_position = transforms[0] @ position
+                print(f"current_position={current_position.flatten()}")
                 distance = np.linalg.norm(current_position[:2])
+                print(f"distance={distance}, self.real_speed={self.real_speed}")
 
                 self.is_stop_need = True
                 nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
@@ -174,7 +180,6 @@ class PurePursuitController (object):
 
     
     def publish_control_inputs(self):
-
         if self.is_trajectory_ready:
             if self.target_ind >= len(self.target_course.cx)-1 :
                 self.speed_publisher.publish(0)  # Stop the vehicule
@@ -182,8 +187,10 @@ class PurePursuitController (object):
                 # Calc control input
                 vi = self.speed_control()
                 di, self.target_ind = self.pure_pursuit_steer_control(self.target_ind)
+                print(f"vi={vi}, self.real_speed={self.real_speed}")
 
                 self.speed_publisher.publish(vi)  # Control speed
+                self.speed_cap_publisher.publish(self.target_speed)
                 self.steering_angle_publisher.publish(di*180/math.pi) # Control steering angle
 
                 self.state.update(self.real_speed, self.real_angular_speed)

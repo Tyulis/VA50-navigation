@@ -428,7 +428,7 @@ cdef void _target_to_image(double[:, :] target_points, double[:, :] image_points
 		image_points[0, i] = projected_x*camera_to_image[0, 0] + projected_y*camera_to_image[0, 1] + camera_to_image[0, 2]
 		image_points[1, i] = projected_x*camera_to_image[1, 0] + projected_y*camera_to_image[1, 1] + camera_to_image[1, 2]
 
-DEF TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE = 100
+#DEF TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE = 100
 
 def target_to_image(double[:, ::1] target_points, double[:, ::1] target_to_camera, double[:, ::1] camera_to_image, double xi):
 	"""Projects 3D points from the target frame to image pixel coordinates, like the camera would
@@ -441,12 +441,12 @@ def target_to_image(double[:, ::1] target_points, double[:, ::1] target_to_camer
 	image_points = np.empty((2, target_points.shape[1]))
 	cdef double[:, ::1] image_points_data = image_points
 	
-	IF CUDA_ENABLED:
-		if target_points.shape[1] > TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE:
-			_target_to_image_cuda(target_points.shape[1], &target_points[0][0], &image_points_data[0][0], &target_to_camera[0][0], &camera_to_image[0][0], xi)
-		else:
-			_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
-	ELSE:
-		_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
+	#IF CUDA_ENABLED:
+	#	if target_points.shape[1] > TARGET_TO_IMAGE_CUDA_MINIMUM_SIZE:
+	#		_target_to_image_cuda(target_points.shape[1], &target_points[0][0], &image_points_data[0][0], &target_to_camera[0][0], &camera_to_image[0][0], xi)
+	#	else:
+	#		_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
+	#ELSE:
+	_target_to_image(target_points, image_points, target_to_camera, camera_to_image, xi)
 
 	return image_points

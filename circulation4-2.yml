@@ -10,6 +10,7 @@ node:
   pointcloud-topic: /lidar
   traffic-sign-topic: /navigation/traffic_sign
   speed-topic: /ZOE2UTBM/control/speed
+  speed-cap-topic: /ZOE2UTBM/control/max_speed
   steering-angle-topic: /ZOE2UTBM/control/steering_angle
 
   transform-service-name: /circulation/TransformBatch

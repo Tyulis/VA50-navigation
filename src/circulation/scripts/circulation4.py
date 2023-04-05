@@ -17,6 +17,7 @@ import sys
 import time
 import enum
 import cProfile
+from threading import Lock
 from collections import Counter
 
 # ══════════════════════════ THIRD-PARTY IMPORTS ══════════════════════════ #
@@ -227,9 +228,10 @@ class TrajectoryExtractorNode (object):
 		rospy.wait_for_service(self.parameters["node"]["drop-service-name"])
 		self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
 		self.drop_service = rospy.ServiceProxy(self.parameters["node"]["drop-service-name"], DropVelocity, persistent=True)
+		self.transform_service_lock = Lock()
 
 		# Initialize the topic subscribers (last to avoid too early messages while other things are not yet initialized)
-		self.image_subscriber = rospy.Subscriber(self.parameters["node"]["image-topic"], Image, self.callback_image, queue_size=1, buff_size=2**28, tcp_nodelay=True)
+		self.image_subscriber = rospy.Subscriber(self.parameters["node"]["image-topic"], Image, self.callback_image, queue_size=1, buff_size=2**28)
 		self.camerainfo_subscriber = rospy.Subscriber(self.parameters["node"]["camerainfo-topic"], CameraInfo, self.callback_camerainfo, queue_size=1)
 		self.direction_subscriber = rospy.Subscriber(self.parameters["node"]["direction-topic"], UInt8, self.callback_direction)
 		self.trafficsign_subscriber = rospy.Subscriber(self.parameters["node"]["traffic-sign-topic"], TrafficSignStatus, self.callback_trafficsign)
@@ -351,7 +353,13 @@ class TrajectoryExtractorNode (object):
 		tries = 0
 		while True:
 			try:
-				response = self.transform_service(request)
+				# Apparently, when a call to the service is pending, the node is free to service other callbacks,
+				# including callback_trafficsign that also call this service
+				# So with the traffic signs subscriber active, it’s only a matter of time until both get to their transform service call concurrently
+				# And for some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
+				# So let’s throw in a lock to prevent ROS from killing itself
+				with self.transform_service_lock:
+					response = self.transform_service(request)
 				break
 			except rospy.ServiceException as exc:
 				if tries > 10:
@@ -1201,6 +1209,14 @@ class TrajectoryExtractorNode (object):
 		endtime = time.time()
 		self.time_buffer.append(endtime - starttime)
 		rospy.loginfo(f"Image handled in {endtime - starttime :.3f} seconds (mean {np.mean(self.time_buffer):.3f}) seconds")
+	
+	"""def __getattr__(self, name):
+		print("GET", name)
+		return object.__getattr__(self, name)
+
+	def __getattribute__(self, name):
+		print("GET", name)
+		return object.__getattribute__(self, name)"""
 
 
 #                          ╔═════════════════════╗                          #

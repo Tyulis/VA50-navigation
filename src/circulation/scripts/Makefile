@@ -18,7 +18,7 @@ BUILD_PREFIX := build
 
 .PHONY: all clean
 
-all: trajutil.so trajeometry.so fish2bird.so fuzzylines.so linetrack.so positioning.so trajectorybuild.so
+all: trajutil.so trajeometry.so fish2bird.so fuzzylines.so linetrack.so trajectorybuild.so #positioning.so
 
 ifeq ($(NVCC_FOUND), 0)
 fish2bird.so: $(SOURCE_PREFIX)/fish2bird.pyx $(SOURCE_PREFIX)/fish2bird_cuda.cu
@@ -37,8 +37,8 @@ fuzzylines.so: $(BUILD_PREFIX)/fuzzylines.c
 linetrack.so: $(BUILD_PREFIX)/linetrack.cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS) $(BUILD_PREFIX)/linetrack.cpp $(LDLIBS) -o linetrack.so
 
-positioning.so: $(BUILD_PREFIX)/positioning.cpp
-	$(CXX) $(CFLAGS) $(LDFLAGS) $(BUILD_PREFIX)/positioning.cpp $(LDLIBS) -o positioning.so
+# positioning.so: $(BUILD_PREFIX)/positioning.cpp
+#	$(CXX) $(CFLAGS) $(LDFLAGS) $(BUILD_PREFIX)/positioning.cpp $(LDLIBS) -o positioning.so
 
 trajectorybuild.so: $(BUILD_PREFIX)/trajectorybuild.cpp
 	$(CXX) $(CFLAGS) $(LDFLAGS) $(BUILD_PREFIX)/trajectorybuild.cpp $(LDLIBS) -o trajectorybuild.so

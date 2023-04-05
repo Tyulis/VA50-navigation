@@ -15,8 +15,8 @@ from std_msgs.msg import Header
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 
 import fish2bird
-from circulation.msg import TimeBatch
-from circulation.srv import TransformBatch, TransformBatchRequest
+from transformtrack.msg import TimeBatch
+from transformtrack.srv import TransformBatch, TransformBatchRequest
 from trafficsigns.msg import TrafficSign, TrafficSignStatus
 
 from traffic_sign_detection import TrafficSignDetector
@@ -61,44 +61,12 @@ class DistanceExtractor (object):
 		self.image_stamp = None
 		self.pointcloud_stamp = None
 
-		# Initialize the service connections
-		rospy.loginfo("Waiting for the TransformBatch service...")
-		self.transform_service = None
-		rospy.wait_for_service(self.parameters["node"]["transform-service-name"])
-		self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
-
 		# Initialize the topic subscribers
 		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
 		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
 		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
 
-		rospy.loginfo("Everything ready")
-
-
-	def get_map_transforms(self, start_times, end_time):
-		"""Get the transform matrix to transform 3d homogeneous coordinates in the right target timestamp"""
-		request = TransformBatchRequest()
-		request.timestamps = TimeBatch(start_times=start_times, end_time=end_time)
-		request.unbias = False
-		tries = 0
-		while True:
-			try:
-				response = self.transform_service(request)
-				break
-			except rospy.ServiceException as exc:
-				if tries > 10:
-					rospy.logerr(f"Connection to service {self.parameters['node']['transform-service-name']} failed {tries} times, skipping")
-					rospy.logerr(f"Failed with error {exc}")
-					raise RuntimeError("Unable to connect to the transform service")
-				rospy.logerr(f"Connection to service {self.parameters['node']['transform-service-name']} lost, reconnecting...")
-				self.transform_service.close()
-				self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
-				tries += 1
-		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size)
-		start_times_unbiased = response.timestamps.start_times
-		end_time_unbiased = response.timestamps.end_time
-		return transforms, start_times_unbiased, end_time_unbiased
-	
+		rospy.loginfo("Everything ready")	
 
 	def get_transform(self, source_frame, target_frame):
 		"""Update the lidar-to-camera transform matrix from the tf topic"""
@@ -124,9 +92,6 @@ class DistanceExtractor (object):
 
 	def callback_image(self, data):
 		"""Extract an image from the camera"""
-		if self.transform_service is None and len(self.pointcloud_stamp_array) > 0:
-			return
-		
 		self.image_frame = data.header.frame_id
 		self.image_stamp = data.header.stamp
 		self.latest_image = np.frombuffer(data.data, dtype=np.uint8).reshape((data.height, data.width, 3))
@@ -137,9 +102,6 @@ class DistanceExtractor (object):
 
 	def callback_pointcloud(self, data):
 		"""Extract a point cloud from the lidar"""
-		if self.transform_service is None:
-			return
-
 		self.pointcloud_frame = data.header.frame_id
 		self.pointcloud_stamp = data.header.stamp
 
@@ -187,12 +149,6 @@ class DistanceExtractor (object):
 
 		self.pointcloud_array = []
 		self.pointcloud_stamp_array = []
-
-
-		# We can add the 3 lines below to transform the lidar points coordinates in the image timestamp as target
-		# transforms, _, _ = self.get_map_transforms([pointcloud_stamp], img_stamp)
-		# transform = transforms[0]
-		# pointcloud = transform @ pointcloud
 
 		lidar_coordinates_in_image = self.lidar_to_image(pointcloud)
 
@@ -254,7 +210,6 @@ class DistanceExtractor (object):
 		cv.imshow('viz', img)
 
 		cv.waitKey(5)
-
 
 if __name__ == "__main__":
 
