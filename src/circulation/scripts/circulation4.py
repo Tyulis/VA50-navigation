@@ -356,7 +356,7 @@ class TrajectoryExtractorNode (object):
 				# Apparently, when a call to the service is pending, the node is free to service other callbacks,
 				# including callback_trafficsign that also call this service
 				# So with the traffic signs subscriber active, it’s only a matter of time until both get to their transform service call concurrently
-				# And for some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
+				# Hor some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
 				# So let’s throw in a lock to prevent ROS from killing itself
 				with self.transform_service_lock:
 					response = self.transform_service(request)
@@ -372,6 +372,7 @@ class TrajectoryExtractorNode (object):
 				tries += 1
 		
 		# The call was successful, get the transforms in the right format and return
+		# The transpose is because the individual matrices are transmitted in column-major order
 		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
 		start_times_unbiased = start_times  # response.timestamps.start_times
 		end_time_unbiased = end_time  # response.timestamps.end_time
@@ -1209,15 +1210,6 @@ class TrajectoryExtractorNode (object):
 		endtime = time.time()
 		self.time_buffer.append(endtime - starttime)
 		rospy.loginfo(f"Image handled in {endtime - starttime :.3f} seconds (mean {np.mean(self.time_buffer):.3f}) seconds")
-	
-	"""def __getattr__(self, name):
-		print("GET", name)
-		return object.__getattr__(self, name)
-
-	def __getattribute__(self, name):
-		print("GET", name)
-		return object.__getattribute__(self, name)"""
-
 
 #                          ╔═════════════════════╗                          #
 # ═════════════════════════╣ NODE INITIALISATION ╠═════════════════════════ #
