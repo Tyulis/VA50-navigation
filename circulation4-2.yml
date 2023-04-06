@@ -65,9 +65,10 @@ intersection:
     trafficsign: 1.00
     marking: 3.85
   mode-switch-distance: 3                                  # Switch to intersection mode at this distance in meters before the actual intersection detected start. Fixes some boundary effects.
-  default-rejoin-distance: 8                               # Try to rejoin a lane after this distance in meters travelled in the intersection
+  default-rejoin-distance: 10                              # Try to rejoin a lane after this distance in meters travelled in the intersection
   min-turn-radius: 5                                       # Clamp the turn radii between those two, in meters
   max-turn-radius: 25                                      # /
+  hint-detection-buffer: 5                                 # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
 
 # Trajectory construction parameters
 trajectory:

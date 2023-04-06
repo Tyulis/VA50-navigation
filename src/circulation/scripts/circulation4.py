@@ -211,14 +211,10 @@ class TrajectoryExtractorNode (object):
 		self.birdeye_range_x = (-self.parameters["birdeye"]["x-range"], self.parameters["birdeye"]["x-range"])
 		self.birdeye_range_y = (self.parameters["birdeye"]["roi-y"], self.parameters["birdeye"]["y-range"])
 
-		# Bad GPS simulation
-		self.gps_rng = np.random.default_rng()
-		self.last_gps_timestamp = rospy.Time(0)
-		self.last_gps_transform = None
-
 		# Intersection management
 		self.next_direction = Direction.FORWARD
 		self.intersection_hints = []
+		self.last_lane_rejoin = None
 
 		# Initialize the service connections
 		rospy.loginfo("Waiting for the TransformBatch service...")
@@ -356,7 +352,7 @@ class TrajectoryExtractorNode (object):
 				# Apparently, when a call to the service is pending, the node is free to service other callbacks,
 				# including callback_trafficsign that also call this service
 				# So with the traffic signs subscriber active, it’s only a matter of time until both get to their transform service call concurrently
-				# Hor some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
+				# For some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
 				# So let’s throw in a lock to prevent ROS from killing itself
 				with self.transform_service_lock:
 					response = self.transform_service(request)
@@ -430,6 +426,15 @@ class TrajectoryExtractorNode (object):
 			return True
 
 	def add_intersection_hint(self, hint):
+		# Skip hints found too close to the last intersection
+		if self.last_lane_rejoin is not None:
+			transforms, _, _ = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
+			distance = np.linalg.norm(transforms[0][:3, 3])
+			if distance < self.parameters["intersection"]["hint-detection-buffer"]:
+				return
+			else:
+				self.last_lane_rejoin = None
+		
 		for existing_hint in self.intersection_hints:
 			if self.match_intersection_hint(existing_hint, hint):
 				existing_hint.merge(hint)
@@ -515,10 +520,11 @@ class TrajectoryExtractorNode (object):
 			except Exception as exc:
 				self.switch_panic(NavigationMode.PANIC_EXCEPTION, exc)
 	
-	def switch_cruise(self):
+	def switch_cruise(self, image_timestamp):
 		"""Switch to cruise navigation mode"""
 		self.navigation_mode = NavigationMode.CRUISE
 		self.next_direction = Direction.FORWARD  # Go forward by default
+		self.last_lane_rejoin = image_timestamp
 		rospy.loginfo(f"Switching navigation mode : {self.navigation_mode}")
 	
 	def switch_intersection(self, navigation_mode, image_timestamp, intersection_distance):
@@ -1187,7 +1193,7 @@ class TrajectoryExtractorNode (object):
 					self.viz_intersection_mode(trajectory_viz, scale_factor, timestamp, None)
 				else:
 					rospy.loginfo("Rejoin lane found, switching back to cruise")
-					self.switch_cruise()
+					self.switch_cruise(timestamp)
 			
 			# In cruise mode, update the trajectory, intersection status, and publish if there is something to publish
 			# Do NOT refactor this into an `else`, it must also be done when the vehicle just got out of intersection mode
