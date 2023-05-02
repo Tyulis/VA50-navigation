@@ -18,6 +18,7 @@ import fish2bird
 from trafficsigns.msg import TrafficSign, TrafficSignStatus
 
 from traffic_sign_detection import TrafficSignDetector
+from traffic_light_detection import detect_traffic_lights
 
 
 DISTANCE_SCALE_MIN = 0
@@ -157,6 +158,8 @@ class DistanceExtractor (object):
 
 		# Get the annotated image and detected traffic signs labels and coordinates
 		img, traffic_signs = self.traffic_sign_detector.get_traffic_signs(img)
+		img, traffic_lights = detect_traffic_lights(img)
+		traffic_signs.extend(traffic_lights)
 
 		# Visualize the lidar data projection onto the image
 		for i, point in enumerate(lidar_coordinates_in_image.T):
@@ -204,7 +207,7 @@ class DistanceExtractor (object):
 			message.traffic_signs = sign_messages
 			self.traffic_sign_publisher.publish(message)
 		
-		img = cv.cvtColor(self.latest_image, cv.COLOR_BGR2RGB)
+		img = cv.cvtColor(self.latest_image, cv.COLOR_RGB2BGR)
 		cv.imshow('viz', img)
 
 		cv.waitKey(5)

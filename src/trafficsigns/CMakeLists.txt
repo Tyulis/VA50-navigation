@@ -8,7 +8,7 @@ project(trafficsigns)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  circulation
+  transformtrack
   ros_numpy
   sensor_msgs
   std_msgs

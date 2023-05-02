@@ -396,17 +396,6 @@ class TrajectoryExtractorNode (object):
 				self.drop_service.close()
 				self.drop_service = rospy.ServiceProxy(self.parameters["node"]["drop-service-name"], DropVelocity, persistent=True)
 				tries += 1
-
-	def distance_till_rejoin(self, image_timestamp):
-		"""In intersection navigation modes, the vehicle follows a predetermined trajectory,
-		   then tries to catch the new lane to follow after some distance stored in `self.rejoin_distance`
-		   Check the distance remaining until that distance is reached
-		   - image_timestamp : rospy.Time : Timestamp to measure the distance at
-		<--------------------- float      : Signed distance until the rejoin distance
-		                                    (negative if the vehicle is already farther than `self.rejoin_distance`)"""
-		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
-		distance = np.linalg.norm(transform[:3, 3])  # Compute the distance from the translation vector in the transform matrix
-		return self.rejoin_distance - distance
 	
 	#                 ╔═══════════════════════════════════╗                 #
 	# ════════════════╣ NAVIGATION MODE SWITCH PROCEDURES ╠════════════════ #
@@ -422,8 +411,7 @@ class TrajectoryExtractorNode (object):
 		existing_positions = np.asarray([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, existing_hint.positions)])[:2]
 		existing_centroid = np.mean(existing_positions, axis=1)
 		hint_position = np.asarray(hint.positions[-1])
-		if np.linalg.norm(existing_centroid - hint_position) < self.parameters["intersection"]["intersection-hint-match-threshold"][hint.category]:
-			return True
+		return np.linalg.norm(existing_centroid - hint_position) < self.parameters["intersection"]["intersection-hint-match-threshold"][hint.category]
 
 	def add_intersection_hint(self, hint):
 		# Skip hints found too close to the last intersection
@@ -441,6 +429,17 @@ class TrajectoryExtractorNode (object):
 				break
 		else:
 			self.intersection_hints.append(hint)
+	
+	def distance_till_rejoin(self, image_timestamp):
+		"""In intersection navigation modes, the vehicle follows a predetermined trajectory,
+		   then tries to catch the new lane to follow after some distance stored in `self.rejoin_distance`
+		   Check the distance remaining until that distance is reached
+		   - image_timestamp : rospy.Time : Timestamp to measure the distance at
+		<--------------------- float      : Signed distance until the rejoin distance
+		                                    (negative if the vehicle is already farther than `self.rejoin_distance`)"""
+		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
+		distance = np.linalg.norm(transform[:3, 3])  # Compute the distance from the translation vector in the transform matrix
+		return self.rejoin_distance - distance
 	
 	def next_intersection(self, image_timestamp):
 		if len(self.intersection_hints) == 0:

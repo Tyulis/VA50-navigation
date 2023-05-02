@@ -10,7 +10,7 @@ import rospy
 from std_msgs.msg import Float32, String, UInt8
 from geometry_msgs.msg import TwistStamped
 
-from circulation.msg import Trajectory
+from trajectory.msg import Trajectory
 from transformtrack.msg import TimeBatch
 from transformtrack.srv import TransformBatch, TransformBatchRequest
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
@@ -47,6 +47,7 @@ class PurePursuitController (object):
         self.target_course = None
         self.target_ind = None
         self.is_stop_need = False
+        self.stop_type = None
         self.speeds_to_stop = None
         self.current_stop_index = None
         self.is_trajectory_ready = False
@@ -145,16 +146,14 @@ class PurePursuitController (object):
 
         for sign in data.traffic_signs:
             # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
-            if sign.type in ('stop', 'yield', 'no-entry'):
+            if sign.type in ('stop', 'yield', 'no-entry', 'light-red', 'light-orange'):
                 position = np.c_[[sign.x, sign.y, sign.z, 1]]
-                print(f"position={position.flatten()}")
                 transforms, _, _ = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
                 current_position = transforms[0] @ position
-                print(f"current_position={current_position.flatten()}")
                 distance = np.linalg.norm(current_position[:2])
-                print(f"distance={distance}, self.real_speed={self.real_speed}")
 
                 self.is_stop_need = True
+                self.stop_type = 'light' if sign.type in ('light-red', 'light-orange') else 'sign'
                 nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
                 self.speeds_to_stop = np.linspace(start = self.real_speed, stop = 0, num = nb_speed_values_to_stop)
                 self.current_stop_index = 0
@@ -166,6 +165,8 @@ class PurePursuitController (object):
                 self.direction_publisher.publish(0b0010)
             elif sign.type == 'ahead-only':
                 self.direction_publisher.publish(0b0001)
+            elif sign.type == 'light-green' and self.is_stop_need and self.stop_type == 'light':
+                self.is_stop_need = False
 
 
     def plot_arrow(self, x, y, yaw, length=1.0, width=0.5, fc="r", ec="self.k"):
@@ -221,10 +222,12 @@ class PurePursuitController (object):
             if self.current_stop_index < len(self.speeds_to_stop):
                 vi = self.speeds_to_stop[self.current_stop_index]
                 self.current_stop_index += 1
-            else:
+            elif self.stop_type == "sign":
                 vi = 0
                 rospy.sleep(2)
                 self.is_stop_need = False
+            else:
+                vi = 0
         else:
             vi = self.state.v + self.Kp * (self.target_speed - self.state.v)
 

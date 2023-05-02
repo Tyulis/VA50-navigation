@@ -1,0 +1,136 @@
+# General communication and addressing parameters
+node:
+  trajectory-node-name: trajectory                         # Name of the trajectory extraction node
+  transform-node-name: transform_batch_server              # Name of the transform service node
+
+  image-topic: /forwardCamera/image_raw                    # Front camera topic                  :                       [Image]                              ⟶ trafficsigns, circulation
+  camerainfo-topic: /forwardCamera/camera_info             # Front camera info topic             :                       [CameraInfo]                         ⟶ trafficsigns, circulation
+  velocity-topic: /ZOE2UTBM/car/velocity                   # Vehicle velocity data topic         :                       [TwistStamped]                       ⟶ transformtrack
+  pointcloud-topic: /lidar                                 # Lidar pointcloud topic              :                       [PointCloud2]                        ⟶ trafficsigns
+  trajectory-topic: /navigation/trajectory                 # Trajectory topic                    : circulation        ⟶ [circulation.msg.Trajectory]         ⟶ control 
+  direction-topic: /navigation/direction                   # Direction for the next intersection : direction, control ⟶ [Uint8]                              ⟶ circulation
+  traffic-sign-topic: /navigation/traffic_sign             # Traffic signs topic                 : trafficsigns       ⟶ [trafficsigns.msg.TrafficSignStatus] ⟶ circulation, control
+  speed-topic: /ZOE2UTBM/control/speed                     # Vehicle speed control topic         : control            ⟶ [Float32]
+  speed-cap-topic: /ZOE2UTBM/control/max_speed             # Vehicle speed cap topic             : control            ⟶ [Float32]
+  steering-angle-topic: /ZOE2UTBM/control/steering_angle   # Vehicle steering topic              : control            ⟶ [Float32]
+
+  transform-service-name: /circulation/TransformBatch      # Transform service address
+  drop-service-name: /circulation/DropVelocity             # Transform service data drop address. To be used ONLY by circulation
+
+  road-frame: base_link                                    # Reference frame for the vehicle. (X, Y) is the ground / road plane, Z points upward, the origin in right underneath the vehicle
+  world-frame: map                                         # Fixed frame of reference
+
+  visualize: true                                          # Enable visualizations
+  time-discrepancy: false                                  # Correct the timestamp discrepancies in the simulator versions < 27/12/2022 messages
+
+# Transform service parameters
+transform:
+  sim-interval: 0.005                                      # Integration interval in the transform service, in seconds. Lower ⟶ more precision, less performance
+
+# Control node parameters
+control:
+  target-speed: 10.0                                       # Target speed for the vehicle, in km/h
+  k: 0.1
+  Lfc: 5.0
+  Kp: 0.5
+  dt: 0.1
+  WB: 2.588
+
+# Values to expect from the overall environment
+environment:
+  lane-width: 3.5                                          # Standard width of a road lane, left to right, in meters
+  crosswalk-width: 0.5                                     # Smaller dimension of a single crosswalk band, in meters
+
+# Bird-eye view parameters
+birdeye:
+  x-range: 15.0                                              # The bird-eye view encompasses [-x-range, +x-range] meters on the X axis (left-right)
+  y-range: 21.8                                            # The bird-eye view encompasses [+roi-y  , +y-range] meters on the Y axis (forward)
+  roi-y: 4.8                                               # Closest distance forward for meaningful data from the camera
+  birdeye-size: 500                                        # Height of the bird-eye view in pixels. The width is deduced such that the y-range to x-range proportions are kept
+
+# Image preprocessing parameters
+preprocess:
+  threshold-window: 33                                     # Adaptive gaussian threshold window size in pixels
+  threshold-bias: -5                                       # Bias on the adaptive threshold
+  open-kernel-size: 4                                      # Size of the opening operation kernel in pixels
+  close-kernel-size: 5                                     # Size of the closing operation kernel in pixels
+
+# Road markings detection parameters
+markings:
+  size-tolerance: 0.20                                     # Relative tolerance on the expected sizes (e.g. crosswalk width) of markings, as a proportion : [(1-size_tolerance)×expected, (1+size_tolerance)×expected]
+  crosswalk:
+    ev2-edge-part: 0.5                                     # Fraction of the ev2 axis to consider for each edge
+    max-rmse: 0.6                                          # Maximum RMSE to keep the rectangle for crosswalk classification
+    dbscan-epsilon: 0.1                                    # Neighbor distance to use in the band clustering
+    min-bands: 3                                           # Minimum amount of bands to count as a crosswalk
+
+# Intersection detection and navigation parameters
+intersection:
+  confidence-threshold:                                    # Minimum confidence to consider for each category
+    trafficsign: 0.6
+    marking: 0.6
+  intersection-hint-match-threshold:                       # Under those distances for each category in meters, intersection hints will be considered the same and get merged
+    trafficsign: 1.00
+    marking: 3.85
+  mode-switch-distance: 3                                  # Switch to intersection mode at this distance in meters before the actual intersection detected start. Fixes some boundary effects.
+  default-rejoin-distance: 12.0                            # Try to rejoin a lane after this distance in meters travelled in the intersection
+  rejoin-factor: 0.8                                       # Proportion of the theoretical distance to start looking for a lane to rejoin
+  min-turn-radius: 5.0                                     # Clamp the turn radii between those two, in meters
+  max-turn-radius: 25.0                                    # /
+  default-turn-radius: 15.0                                # Default turn radius in case there is no curvature information
+  hint-detection-buffer: 5                                 # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  hint-clustering-distance: 2.0                            # Epsilon distance for final hint clustering 
+
+# Trajectory construction parameters
+trajectory:
+  history-size: 15                                         # Length of the history of last local trajectories to operate on
+
+  line-reliability-range: 22                               # Points beyond this distance on a curve are discarded as too far away ⟶ to imprecise/noisy to be informative
+  line-reliability-dampening: 3                            # Control the exponential decrease on reliability score of points relative to the distance
+  line-reliability-extension-penalty: 1.8                  # Factor to the dampening coefficient for extrapolated points, that are deemed less reliable
+
+  trajectory-step: 0.5                                     # Curves are subsampled to intervals of this length in meters
+  trajectory-range: 15                                     # Trajectories are built up to this distance along the curve
+  trajectory-start: 0                                      # Trajectories start at the point [0, trajectory-start] in vehicle frame
+  line-score-threshold: 0.5                                # Unused, left for compatibility
+  trajectory-score-threshold: 0.5                          # Points that are below this score are disregarded by the trajectory compilation routine
+
+# Line detection parameters
+lines:
+  savgol_degree: 2                                         # Savitzky-Golay filter polynomial degree
+  initial_filter_window: 5                                 # Savitzky-Golay window width of the first filter applied to curves before any further processing
+  smoothing_filter_window: 9                               # Savitzky-Golay window width of the filter last applied to final detected curves
+  branch_step: 10                                          # Resampling distance applied before any further processing, in pixels
+  min_branch_length: 8                                     # Curves that are shorter than this length in pixels are discarded right away
+  min_line_length: 35                                      # Curves that are shorter than this length in pixels after all processing is done are discarded
+  max_curvature_metric: 1                                  # Curve sections that have a curvature sharper than this in rad/m are split
+  curvature_filter_size: 9                                 # Size of the gaussian filter applied to curvature to smooth out noise in the local curvature values
+  curvature_filter_deviation: 1                            # Standard deviation of the gaussian filter applied to curvature values
+  merge_max_distance: 140                                  # Curves that are farther away than this distance in pixels from each other can not be merged
+  estimate_start: 1                                        # Index of the first point relative to a curve extremity to consider for merger estimation
+  estimate_end: 8                                          # Index of the last point relative to a curve extremity to consider for merger estimation
+  max_angle_diff: 0.86                                     # Curves whose extremity vectors have an angle difference higher than this value in radians can not be merged
+  max_rmse: 2                                              # Curves under this Root Mean Squared Error value are merged
+
+# Fuzzy lane selection logic parameters
+fuzzy-lines:
+  local-area-x: 5                                          # Use only segments in range [-local-area-x, +local-area-x] on the X axis for main lane angle estimation
+  local-area-y: 10                                         # Use only segments in range [0, +local-area-y] on the Y axis for main lane angle estimation
+  base-score: 4                                            # Base score from which maluses are applied
+  centers:                                                 # Centers of each fuzzy subset, for each input variable, and for the output, in order [good, medium, bad]
+    forward-distance: [4.8, 10.8, 21.8]                    # Distance of the closest point of the curve on the Y axis, in meters. Closer = better
+    line-distance: [0, 0.5, 2]                             # Orthogonal distance of the estimation vector to the expected markings, in meters. Closer = better
+    line-lengths: [10, 5, 0.0]                             # Length of the curve, in meters. Longer = better
+    parallel-distances: [0, 0.3, 1]                        # Error on the lane width, in terms of expected lane widths. Lower = better
+    parallel-angles: [0, 0.51, 1.24]                       # Mean difference to parallelism between the curves in radians. Lower = better
+    output: [0, 0.25, 0.5, 0.8, 1]                         # Reliability score values
+  malus:                                                   # Malus to apply to the score for belonging to each fuzzy subset of each variable
+    forward-distance: [0, -1, -3]
+    line-distance: [0, -2, -3]
+    line-lengths: [0, -1, -2]
+    parallel-distances: [0, -2, -5]
+    parallel-angles: [0, -1, -5]
+  lane-selection-threshold: 0.7                            # A detected lane is only considered good if its score is above this threshold, otherwise fall back to single line
+  single-line-selection-threshold: 0.6                     # A fallback single line is only considered good if its score is above this threshold, otherwise fail
+  vertical-angle-tolerance: 0.5                            # Absolute tolerance in radians around the main lane angle for vectors to be considered
+  main-angle-cut: 0.43                                     # Angles outside of [π/2 - main-angle-cut, π/2 + main-angle-cut] are disregarded for main lane angle estimation

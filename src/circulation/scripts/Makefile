@@ -22,6 +22,7 @@ all: trajutil.so trajeometry.so fish2bird.so fuzzylines.so linetrack.so trajecto
 
 ifeq ($(NVCC_FOUND), 0)
 fish2bird.so: $(SOURCE_PREFIX)/fish2bird.pyx $(SOURCE_PREFIX)/fish2bird_cuda.cu
+	echo $(NVCC_FOUND)
 	cython -3 -a -E CUDA_ENABLED=1 $(SOURCE_PREFIX)/fish2bird.pyx -o $(BUILD_PREFIX)/fish2bird.c
 	$(CC) -c $(CFLAGS) $(BUILD_PREFIX)/fish2bird.c -o $(BUILD_PREFIX)/fish2bird.o
 	$(NVCC) -c $(NVCCFLAGS) $(SOURCE_PREFIX)/fish2bird_cuda.cu -o $(BUILD_PREFIX)/fish2bird_cuda.o

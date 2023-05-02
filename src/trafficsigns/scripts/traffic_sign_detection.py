@@ -1,8 +1,8 @@
 import cv2 as cv
 import numpy as np
-from collections import namedtuple
 from skimage import exposure
 from keras.models import load_model
+from trafficsign import TrafficSign
 
 GLOBAL_LABELS = ['prohibitory',
                 'danger',
@@ -100,8 +100,6 @@ SPECIFIC_LABELS = [
     'End of no passing', 
     'End no passing veh > 3.5 tons' 
 ]
-
-TrafficSign = namedtuple("TrafficSign", "category type label x y width height confidence")
 
 
 class TrafficSignDetector(object):

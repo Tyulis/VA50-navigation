@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.0.2)
 project(transformtrack)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++14 -O2 -march=native)
+add_compile_options(-std=c++17 -O2 -march=native)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -137,7 +137,6 @@ include_directories(
 add_executable(${PROJECT_NAME}_node
   src/TransformTrackNode.cpp
   src/TransformManager.cpp
-  src/config.cpp
   src/main.cpp
 )
 

@@ -87,7 +87,7 @@ trajectory:
 # Line detection parameters
 find-lines-parameters:
   savgol_degree: 2                                         # Savitzky-Golay filter polynomial degree
-  initial_filter_window: 25                                # Savitzky-Golay window width of the first filter applied to curves before any further processing
+  initial_filter_window: 5                                 # Savitzky-Golay window width of the first filter applied to curves before any further processing
   smoothing_filter_window: 9                               # Savitzky-Golay window width of the filter last applied to final detected curves
   branch_step: 10                                          # Resampling distance applied before any further processing, in pixels
   min_branch_length: 8                                     # Curves that are shorter than this length in pixels are discarded right away
