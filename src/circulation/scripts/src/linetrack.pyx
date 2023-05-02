@@ -129,7 +129,7 @@ cdef void _extract_branch(uint8_t[:, ::1] remainder, deque[(Py_ssize_t, Py_ssize
 		elif neighbor_index >= 2:
 			# First point on the branch and no init position, this is the initial point on the branch and goes multiple ways
 			# Select the two farthest apart neighbors, and add them at both ends of the branch
-			if branch.size() == 1 and init_y < 0 and init_y < 0:
+			if branch.size() == 1 and init_y < 0 and init_x < 0:
 				# Select the neighbors that are farthest apart
 				max_sqdistance = 0
 				best_neighbor1 = best_neighbor2 = -1
@@ -226,7 +226,7 @@ cpdef list extract_branches(uint8_t[:, :] image, size_t min_size=1):
 			else:
 				remainder[y, x] = 0
 	
-	# No loop on the remainder, and extract a branch whenever we find an interesting point
+	# Now loop on the remainder, and extract a branch whenever we find an interesting point
 	# Normally, all curve points are handled in one go
 	for y in range(image.shape[0]):
 		for x in range(image.shape[1]):
@@ -287,7 +287,8 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 	# Normalize it such that its sum is 1
 	for j in range(filter_size):
 		gaussian_filter[j] /= gaussian_weight
-		
+	
+	print("\n")
 	# Now loop on the curve, computing the pointwise curvature, filtering it, and splitting the curve when necessary
 	section_start = 0  # Start index of the section (first index to have a low enough curvature)
 	section_end = 0    # End index of the section (first index to have a curvature too high)
@@ -320,6 +321,7 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
 		
+		print(smooth_curvature)
 		# Increment-and-cycle-back the index in the queue buffer for next time
 		curvature_index = (curvature_index + 1) % filter_size
 
@@ -348,6 +350,8 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		smooth_curvature = 0
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
+		print(smooth_curvature)
+
 		curvature_index = (curvature_index + 1) % filter_size
 		if previous_curvature >= 0:
 			if (smooth_curvature < max_curvature) and (previous_curvature >= max_curvature):
@@ -386,7 +390,7 @@ cdef void _fit_line(_MergeState* result, double[:, :] line1, double[:, :] line2,
 	   - line2        : double[2, M] : Second curve to check
 	   - start1, end1 : Py_ssize_t   : Range of indices to use for the regression in line1 (start inclusive, end exclusive)
 	   - start2, end2 : Py_ssize_t   : Range of indices to use for the regression in line2 (start inclusive, end exclusive)
-	""" 
+	"""
 	# As always in this program, we use PCA instead of the usual linear regression techniques,
 	# because the latter are to infer linear *functions* y(x), while we’re looking for geometric lines in the plane,
 	cdef Py_ssize_t npoints = (end1 - start1) + (end2 - start2), i
@@ -714,12 +718,14 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 	for line in lines:
 		if line.shape[1] > savgol_degree + 1 and trajeometry.line_length(line) > min_branch_length:
 			# Smooth the branch, at this points it is contiguous pixel coordinates
-			filtered_branch = trajeometry.savgol_filter(line, trajeometry.savgol_window(initial_filter_window, line.shape[1]), savgol_degree)
-			resampled_branch = trajeometry.resample_curve(filtered_branch, branch_step)
+			resampled_branch = trajeometry.resample_curve(line, branch_step)
+			if resampled_branch.shape[1] <= savgol_degree + 1:
+				continue
+			
+			filtered_branch = trajeometry.savgol_filter(resampled_branch, trajeometry.savgol_window(initial_filter_window, resampled_branch.shape[1]), savgol_degree)
+			if filtered_branch.shape[1] > savgol_degree + 1:
+				cluster_lines.extend(cut_line_angles(filtered_branch, curvature_filter_size, curvature_filter_deviation, savgol_degree, min_branch_length, max_curvature))
 
-			if resampled_branch.shape[1] > savgol_degree + 1:
-				cluster_lines.extend(cut_line_angles(resampled_branch, curvature_filter_size, curvature_filter_deviation, savgol_degree, min_branch_length, max_curvature))
-	
 	# Merge lines that are in the continuity of each other
 	# This checks all the combinations of line and merge them when possible
 	
@@ -799,5 +805,5 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 			resampled_line = trajeometry.resample_curve(line, branch_step)
 			filtered_line = trajeometry.savgol_filter(resampled_line, trajeometry.savgol_window(smoothing_filter_window, resampled_line.shape[1]), savgol_degree)
 			final_lines.append(filtered_line)
-	
+
 	return final_lines
