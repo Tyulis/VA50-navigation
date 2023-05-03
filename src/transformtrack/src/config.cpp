@@ -10,11 +10,12 @@ namespace config {
 		const std::string image_topic = "/forwardCamera/image_raw";
 		const std::string camerainfo_topic = "/forwardCamera/camera_info";
 		const std::string velocity_topic = "/ZOE2UTBM/car/velocity";
+		const std::string pointcloud_topic = "/lidar";
 		const std::string trajectory_topic = "/navigation/trajectory";
 		const std::string direction_topic = "/navigation/direction";
-		const std::string pointcloud_topic = "/lidar";
 		const std::string traffic_sign_topic = "/navigation/traffic_sign";
 		const std::string speed_topic = "/ZOE2UTBM/control/speed";
+		const std::string speed_cap_topic = "/ZOE2UTBM/control/max_speed";
 		const std::string steering_angle_topic = "/ZOE2UTBM/control/steering_angle";
 		const std::string transform_service_name = "/circulation/TransformBatch";
 		const std::string drop_service_name = "/circulation/DropVelocity";
@@ -57,9 +58,10 @@ namespace config {
 			const float marking = 3.85;
 		}
 		const int mode_switch_distance = 3;
-		const int default_rejoin_distance = 8;
+		const int default_rejoin_distance = 10;
 		const int min_turn_radius = 5;
 		const int max_turn_radius = 25;
+		const int hint_detection_buffer = 5;
 	}
 	namespace trajectory {
 		const int history_size = 15;

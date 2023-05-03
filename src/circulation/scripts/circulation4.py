@@ -415,9 +415,13 @@ class TrajectoryExtractorNode (object):
 
 	def add_intersection_hint(self, hint):
 		# Skip hints found too close to the last intersection
+		if self.navigation_mode != NavigationMode.CRUISE:
+			return
+		
 		if self.last_lane_rejoin is not None:
 			transforms, _, _ = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
 			distance = np.linalg.norm(transforms[0][:3, 3])
+			print(f"Distance since rejoin : {distance}")
 			if distance < self.parameters["intersection"]["hint-detection-buffer"]:
 				return
 			else:
@@ -972,10 +976,16 @@ class TrajectoryExtractorNode (object):
 		   - intersection_distance : float : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection)
 		"""
 		self.rejoin_distance = self.parameters["intersection"]["default-rejoin-distance"]
+		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		local_lines = [(transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2] for transform, trajectory in zip(transforms, self.trajectory_buffer)]
+		cut_lines = [local_line[:, local_line[1] < intersection_distance] for local_line in local_lines]
+		main_angle = self.estimate_main_angle(cut_lines)
 
-		# Just output a straight trajectory for as long as necessary		
+		# Just output a straight trajectory for as long as necessary based on that main angle		
 		max_length = int(100 / self.parameters["trajectory"]["trajectory-step"])
-		self.current_trajectory = np.asarray((np.zeros(max_length), np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"]))
+		self.current_trajectory = np.asarray((np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"] * np.cos(main_angle),
+											  np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"] * np.sin(main_angle)))
+		# self.current_trajectory = np.asarray((np.zeros(max_length), np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"]))
 		self.current_trajectory_timestamp = image_timestamp
 	
 	def build_right_turn_trajectory(self, image_timestamp, intersection_distance):

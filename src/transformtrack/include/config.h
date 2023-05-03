@@ -13,11 +13,12 @@ namespace config {
 		extern const std::string image_topic;
 		extern const std::string camerainfo_topic;
 		extern const std::string velocity_topic;
+		extern const std::string pointcloud_topic;
 		extern const std::string trajectory_topic;
 		extern const std::string direction_topic;
-		extern const std::string pointcloud_topic;
 		extern const std::string traffic_sign_topic;
 		extern const std::string speed_topic;
+		extern const std::string speed_cap_topic;
 		extern const std::string steering_angle_topic;
 		extern const std::string transform_service_name;
 		extern const std::string drop_service_name;
@@ -63,6 +64,7 @@ namespace config {
 		extern const int default_rejoin_distance;
 		extern const int min_turn_radius;
 		extern const int max_turn_radius;
+		extern const int hint_detection_buffer;
 	}
 	namespace trajectory {
 		extern const int history_size;

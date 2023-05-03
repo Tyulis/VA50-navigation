@@ -288,7 +288,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 	for j in range(filter_size):
 		gaussian_filter[j] /= gaussian_weight
 	
-	print("\n")
 	# Now loop on the curve, computing the pointwise curvature, filtering it, and splitting the curve when necessary
 	section_start = 0  # Start index of the section (first index to have a low enough curvature)
 	section_end = 0    # End index of the section (first index to have a curvature too high)
@@ -321,7 +320,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
 		
-		print(smooth_curvature)
 		# Increment-and-cycle-back the index in the queue buffer for next time
 		curvature_index = (curvature_index + 1) % filter_size
 
@@ -350,7 +348,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		smooth_curvature = 0
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
-		print(smooth_curvature)
 
 		curvature_index = (curvature_index + 1) % filter_size
 		if previous_curvature >= 0:
