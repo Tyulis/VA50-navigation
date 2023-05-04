@@ -45,9 +45,7 @@ if [[ $1 == cython ]] || [[ $2 == cython ]] || [[ $3 == cython ]]; then
 	cp src/circulation/scripts/fish2bird*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/linetrack*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/fuzzylines*.so devel/lib/python3/dist-packages/
-	cp src/circulation/scripts/positioning*.so devel/lib/python3/dist-packages/
 	cp src/circulation/scripts/trajectorybuild*.so devel/lib/python3/dist-packages/
-	cp src/circulation/scripts/roadnet.py devel/lib/python3/dist-packages/
 	cp src/trafficsigns/scripts/traffic_sign_detection.py devel/lib/python3/dist-packages/
 fi
 

@@ -7,3 +7,4 @@ transforms3d>=0.4.1
 scikit-image>=0.17.2
 protobuf>=3.19.6
 tensorflow>=2.6.2
+cvlib>=0.2.7

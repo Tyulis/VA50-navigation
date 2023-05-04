@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 import sys
 import cProfile
 
@@ -16,6 +31,7 @@ from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 
 import fish2bird
 from trafficsigns.msg import TrafficSign, TrafficSignStatus
+from visualization.msg import VizUpdate
 
 from traffic_sign_detection import TrafficSignDetector
 from traffic_light_detection import detect_traffic_lights
@@ -33,6 +49,7 @@ class DistanceExtractor (object):
 		self.camerainfo_topic = self.parameters["node"]["camerainfo-topic"]
 		self.pointcloud_topic = self.parameters["node"]["pointcloud-topic"]
 		self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
+		self.visualization_topic = self.parameters["node"]["visualization-topic"]
 
 		# Initialize the topic publisher
 		self.traffic_sign_publisher = rospy.Publisher(self.traffic_sign_topic, TrafficSignStatus, queue_size=10)
@@ -64,6 +81,7 @@ class DistanceExtractor (object):
 		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
 		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
 		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
+		self.visualization_publisher = rospy.Publisher(self.visualization_topic, VizUpdate, queue_size=10)
 
 		rospy.loginfo("Everything ready")	
 
@@ -207,6 +225,9 @@ class DistanceExtractor (object):
 			message.traffic_signs = sign_messages
 			self.traffic_sign_publisher.publish(message)
 		
+		#image_message = Image(height=img.shape[0], width=img.shape[1], data=tuple(img.flatten()))
+		#message = VizUpdate(id=self.parameters["visualization"]["trafficsigns-id"], image=image_message)
+		#self.visualization_publisher.publish(message)
 		img = cv.cvtColor(self.latest_image, cv.COLOR_RGB2BGR)
 		cv.imshow('viz', img)
 
@@ -222,5 +243,4 @@ if __name__ == "__main__":
 		rospy.init_node("traffic_sign_distances")
 		node = DistanceExtractor(parameters)
 		rospy.spin()
-		cv.destroyAllWindows()
 

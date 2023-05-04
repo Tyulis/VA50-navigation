@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 """
 Main module of the ROS node that builds the vehicle’s trajectory
 
@@ -37,6 +52,7 @@ from transformtrack.srv import TransformBatch, TransformBatchRequest, DropVeloci
 from transformtrack.msg import TimeBatch
 from circulation.msg import Trajectory
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
+from visualization.msg import VizUpdate
 
 # ═══════════════════════ CYTHON EXTENSION MODULES ════════════════════════ #
 import linetrack
@@ -80,11 +96,53 @@ class Direction:
 	LEFT = 0b0010
 	RIGHT = 0b0100
 
+# class TrajectoryVisualizer (object):
+# 	"""Quick-and-dirty visualization window management
+# 	   There are 2 visualizations, just merge them into one and call cv.imshow"""
+	
+# 	def __init__(self, parameters):
+# 		self.parameters = parameters
+# 		self.publisher = rospy.Publisher(self.parameters["node"]["visualization-topic"], VizUpdate, queue_size=10)
+
+# 	def update_line_detection(self, be_binary, lines, left_line_index, right_line_index, markings):
+# 		"""Generate and update the left visualization from the preprocessed image and the detected lines and markings
+# 		   - be_binary        : ndarray[y, x]       : Preprocessed camera image (binary edge-detected bird-eye view)
+# 		   - lines            : list<ndarray[2, N]> : Detected discrete curves in the image
+# 		   - left_line_index  : int                 : Index of the left lane marking in the `lines` list, or None
+# 		   - right_line_index : int                 : Index of the right lane marking in the `lines` list, or None
+# 		   - markings         : dict<str, …>        : Dictionary of detected road markings. Currently only supports `crosswalks`
+# 		"""
+# 		line_viz = cv.merge((be_binary, be_binary, be_binary))
+# 		for line in lines:
+# 			cv.polylines(line_viz, [line.astype(int).transpose()], False, (0, 200, 0), 2)
+# 		if left_line_index is not None:
+# 			cv.polylines(line_viz, [lines[left_line_index].astype(int).transpose()], False, (255, 0, 0), 4)
+# 		if right_line_index is not None:
+# 			cv.polylines(line_viz, [lines[right_line_index].astype(int).transpose()], False, (0, 100, 255), 4)
+
+# 		for i, crosswalk in enumerate(markings["crosswalks"]):
+# 			color = ((int(i * 255 / len(markings["crosswalks"])) + 30) % 255, 255, 255)
+# 			for rectangle in crosswalk:
+# 				cv.fillPoly(line_viz, [rectangle.astype(int).transpose()], color)
+
+# 		self.update(line_viz, self.parameters["visualization"]["circulation-lines-id"])
+
+# 	def update_trajectory_construction(self, viz):
+# 		"""Update the right visualization with the given image"""
+# 		self.update(viz, self.parameters["visualization"]["circulation-trajectory-id"])
+
+# 	def update(self, image, id):
+# 		"""Update the visualization window"""
+# 		image_message = Image(height=image.shape[0], width=image.shape[1], data=tuple(image.flatten()))
+# 		message = VizUpdate(id=id, image=image_message)
+# 		self.publisher.publish(message)
+	
+
 class TrajectoryVisualizer (object):
 	"""Quick-and-dirty visualization window management
 	   There are 2 visualizations, just merge them into one and call cv.imshow"""
 	
-	def __init__(self):
+	def __init__(self, parameters):
 		self.line_viz = None
 		self.trajectory_viz = None
 
@@ -128,7 +186,6 @@ class TrajectoryVisualizer (object):
 		## cv.resizeWindow("viz", full_viz.shape[1], full_viz.shape[0])
 		cv.imshow("viz", full_viz)
 		cv.waitKey(1)
-
 
 class IntersectionHint (object):
 	"""Hold the position and informations about anything that may indicate an intersection"""
@@ -199,7 +256,7 @@ class TrajectoryExtractorNode (object):
 
 		# Initialize the visualization
 		if self.parameters["node"]["visualize"]:
-			self.visualisation = TrajectoryVisualizer()
+			self.visualisation = TrajectoryVisualizer(self.parameters)
 		else:
 			self.visualisation = None
 

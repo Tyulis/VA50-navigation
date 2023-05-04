@@ -137,7 +137,6 @@ include_directories(
 add_executable(${PROJECT_NAME}_node
   src/TransformTrackNode.cpp
   src/TransformManager.cpp
-  src/config.cpp
   src/main.cpp
 )
 

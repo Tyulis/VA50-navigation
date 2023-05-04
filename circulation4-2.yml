@@ -2,17 +2,19 @@
 node:
   trajectory-node-name: trajectory                         # Name of the trajectory extraction node
   transform-node-name: transform_batch_server              # Name of the transform service node
+  visualization-node-name: visualization
 
-  image-topic: /forwardCamera/image_raw                    # Front camera topic                  :                       [Image]                              ⟶ trafficsigns, circulation
-  camerainfo-topic: /forwardCamera/camera_info             # Front camera info topic             :                       [CameraInfo]                         ⟶ trafficsigns, circulation
-  velocity-topic: /ZOE2UTBM/car/velocity                   # Vehicle velocity data topic         :                       [TwistStamped]                       ⟶ transformtrack
-  pointcloud-topic: /lidar                                 # Lidar pointcloud topic              :                       [PointCloud2]                        ⟶ trafficsigns
-  trajectory-topic: /navigation/trajectory                 # Trajectory topic                    : circulation        ⟶ [circulation.msg.Trajectory]         ⟶ control 
-  direction-topic: /navigation/direction                   # Direction for the next intersection : direction, control ⟶ [Uint8]                              ⟶ circulation
-  traffic-sign-topic: /navigation/traffic_sign             # Traffic signs topic                 : trafficsigns       ⟶ [trafficsigns.msg.TrafficSignStatus] ⟶ circulation, control
-  speed-topic: /ZOE2UTBM/control/speed                     # Vehicle speed control topic         : control            ⟶ [Float32]
-  speed-cap-topic: /ZOE2UTBM/control/max_speed             # Vehicle speed cap topic             : control            ⟶ [Float32]
-  steering-angle-topic: /ZOE2UTBM/control/steering_angle   # Vehicle steering topic              : control            ⟶ [Float32]
+  image-topic: /forwardCamera/image_raw                    # Front camera topic                  :                              [Image]                              ⟶ trafficsigns, circulation
+  camerainfo-topic: /forwardCamera/camera_info             # Front camera info topic             :                              [CameraInfo]                         ⟶ trafficsigns, circulation
+  velocity-topic: /ZOE2UTBM/car/velocity                   # Vehicle velocity data topic         :                              [TwistStamped]                       ⟶ transformtrack
+  pointcloud-topic: /lidar                                 # Lidar pointcloud topic              :                              [PointCloud2]                        ⟶ trafficsigns
+  trajectory-topic: /navigation/trajectory                 # Trajectory topic                    : circulation               ⟶ [circulation.msg.Trajectory]         ⟶ control 
+  direction-topic: /navigation/direction                   # Direction for the next intersection : direction, control        ⟶ [Uint8]                              ⟶ circulation
+  traffic-sign-topic: /navigation/traffic_sign             # Traffic signs topic                 : trafficsigns              ⟶ [trafficsigns.msg.TrafficSignStatus] ⟶ circulation, control
+  speed-topic: /ZOE2UTBM/control/speed                     # Vehicle speed control topic         : control                   ⟶ [Float32]
+  speed-cap-topic: /ZOE2UTBM/control/max_speed             # Vehicle speed cap topic             : control                   ⟶ [Float32]
+  steering-angle-topic: /ZOE2UTBM/control/steering_angle   # Vehicle steering topic              : control                   ⟶ [Float32]
+  visualization-topic: /navigation/visualization           # Visualization update topic          : circulation, trafficsigns ⟶ [visualization.msg.VizUpdate]        ⟶ visualization
 
   transform-service-name: /circulation/TransformBatch      # Transform service address
   drop-service-name: /circulation/DropVelocity             # Transform service data drop address. To be used ONLY by circulation
@@ -123,3 +125,9 @@ fuzzy-lines:
   single-line-selection-threshold: 0.6                     # A fallback single line is only considered good if its score is above this threshold, otherwise fail
   vertical-angle-tolerance: 0.5                            # Absolute tolerance in radians around the main lane angle for vectors to be considered
   main-angle-cut: 0.43                                     # Angles outside of [π/2 - main-angle-cut, π/2 + main-angle-cut] are disregarded for main lane angle estimation
+
+# Visualization parameters
+visualization:
+  circulation-lines-id: 0
+  circulation-trajectory-id: 1
+  trafficsigns-id: 2

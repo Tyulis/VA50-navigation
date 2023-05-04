@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>circulation</name>
-  <version>0.4.219</version>
-  <description>Build trajectories from images, as required to navigate the environment</description>
+  <name>visualization</name>
+  <version>0.0.1</version>
+  <description>The visualization package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->
@@ -19,7 +19,7 @@
   <!-- Url tags are optional, but multiple are allowed, one per tag -->
   <!-- Optional attribute type can be: website, bugtracker, or repository -->
   <!-- Example: -->
-  <!-- <url type="website">http://wiki.ros.org/circulation</url> -->
+  <!-- <url type="website">http://wiki.ros.org/visualization</url> -->
 
 
   <!-- Author tags are optional, multiple are allowed, one per tag -->
@@ -50,15 +50,11 @@
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
   <depend>rospy</depend>
-  <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
-  <depend>tf2_ros</depend>
-  <depend>transformtrack</depend>
-  <depend>visualization</depend>
   <build_depend>message_generation</build_depend>
   <build_export_depend>message_runtime</build_export_depend>
   <exec_depend>message_runtime</exec_depend>
+
 
 
   <!-- The export tag contains other, unspecified, tags -->
