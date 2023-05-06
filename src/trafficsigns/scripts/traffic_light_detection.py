@@ -43,8 +43,6 @@ def detect_traffic_lights(image):
 		orange /= total
 		green /= total
 
-		print(red, orange, green)
-
 		if red > 0.4: type = "light-red"
 		elif green > 0.4: type = "light-green"
 		elif orange > 0.4: type = "light-orange"

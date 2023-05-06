@@ -25,24 +25,17 @@ def chooseDirection(pub, direction):
         pub.publish(0b0010)
     elif direction == '\x1b[C':
         pub.publish(0b0100)
-
-def getInput():
-    while True:
-        direction = input("Où aller ? Tout droit/Gauche/Droite :")
-        if direction == '\x1b[A' or direction == '\x1b[C' or direction == '\x1b[D':
-            return direction
-        elif direction.upper() == 'Q':
-            return None
-        else:
-            print('Erreur ! Veuillez utiliser les touches directionnelles')
-    
+    elif direction == '2':
+        pub.publish(0b1000)
+    elif direction == " ":
+        pub.publish(0b10000)
 
 if __name__ == '__main__':
     rospy.init_node('direction')
     pub = rospy.Publisher('/navigation/direction', UInt8, queue_size=1)
     while True:
-        direction = getInput()
-        if direction is not None:
+        direction = input("Où aller ? Tout droit/Gauche/Droite :")
+        if direction.upper() != "Q":
             chooseDirection(pub, direction)
         else:
             break

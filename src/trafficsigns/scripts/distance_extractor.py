@@ -184,7 +184,7 @@ class DistanceExtractor (object):
 		for i, point in enumerate(lidar_coordinates_in_image.T):
 				# Filter out points that are not in the image dimension or behind the camera
 				if 0 <= point[0] < img.shape[1] and 0 <= point[1] < img.shape[0] and camera_pointcloud[2, i] >=0:
-					cv.circle(img, (int(point[0]), int(point[1])), 1, (0, 255, 0), -1)
+					cv.drawMarker(img, (int(point[0]), int(point[1])), (0, 255, 0), cv.MARKER_CROSS, 4)
 
 		# If at least one traffic sign is detected
 		if len(traffic_signs) > 0:

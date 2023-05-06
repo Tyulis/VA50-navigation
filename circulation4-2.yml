@@ -34,7 +34,7 @@ transform:
 
 # Control node parameters
 control:
-  target-speed: 10.0                                       # Target speed for the vehicle, in km/h
+  target-speed: 8.0                                       # Target speed for the vehicle, in km/h
   k: 0.1
   Lfc: 5.0
   Kp: 0.5
@@ -70,7 +70,7 @@ intersection:
     trafficsign: 1.00
     marking: 3.85
   mode-switch-distance: 3                                  # Switch to intersection mode at this distance in meters before the actual intersection detected start. Fixes some boundary effects.
-  default-rejoin-distance: 10                              # Try to rejoin a lane after this distance in meters travelled in the intersection
+  default-rejoin-distance: 15                              # Try to rejoin a lane after this distance in meters travelled in the intersection
   min-turn-radius: 5                                       # Clamp the turn radii between those two, in meters
   max-turn-radius: 25                                      # /
   hint-detection-buffer: 15                                # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
@@ -88,6 +88,7 @@ trajectory:
   trajectory-start: 0                                      # Trajectories start at the point [0, trajectory-start] in vehicle frame
   line-score-threshold: 0.5                                # Unused, left for compatibility
   trajectory-score-threshold: 0.5                          # Points that are below this score are disregarded by the trajectory compilation routine
+  max-output-angle: 0.314
 
 # Line detection parameters
 find-lines-parameters:
@@ -113,7 +114,7 @@ fuzzy-lines:
   base-score: 4                                            # Base score from which maluses are applied
   centers:                                                 # Centers of each fuzzy subset, for each input variable, and for the output, in order [good, medium, bad]
     forward-distance: [4.8, 10.8, 21.8]                    # Distance of the closest point of the curve on the Y axis, in meters. Closer = better
-    line-distance: [0, 0.5, 2]                             # Orthogonal distance of the estimation vector to the expected markings, in meters. Closer = better
+    line-distance: [0, 1, 2]                               # Orthogonal distance of the estimation vector to the expected markings, in meters. Closer = better
     line-lengths: [10, 5, 0.0]                             # Length of the curve, in meters. Longer = better
     parallel-distances: [0, 0.3, 1]                        # Error on the lane width, in terms of expected lane widths. Lower = better
     parallel-angles: [0, 0.51, 1.24]                       # Mean difference to parallelism between the curves in radians. Lower = better

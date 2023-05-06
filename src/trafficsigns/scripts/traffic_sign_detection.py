@@ -119,18 +119,17 @@ SPECIFIC_LABELS = [
 class TrafficSignDetector(object):
     def __init__(self):
         self.yolov4_model = cv.dnn.readNet("yolov4-tiny_training_last.weights", "yolov4-tiny_training.cfg") # DETECTION MODEL
-        self.yolov4_model.setPreferableBackend(cv.dnn.DNN_BACKEND_CUDA)
-        self.yolov4_model.setPreferableTarget(cv.dnn.DNN_TARGET_CUDA)
+        # self.yolov4_model.setPreferableBackend(cv.dnn.DNN_BACKEND_CUDA)
+        # self.yolov4_model.setPreferableTarget(cv.dnn.DNN_TARGET_CUDA)
         self.recognition_model = load_model('DeepLeNet-5_CLAHE_AUG(v2).h5') # RECOGNITION MODEL
 
         #get last layers names
-        self.layer_names = self.yolov4_model.getLayerNames()
-        self.output_layers = [self.layer_names[i - 1] for i in self.yolov4_model.getUnconnectedOutLayers()]
+        self.output_layers = self.yolov4_model.getUnconnectedOutLayersNames()
         self.confidence_threshold = 0.3
         self.font = cv.FONT_HERSHEY_SIMPLEX
 
-        trial_image = (255 * np.random.random((1028, 700, 3))).astype(np.uint8)
-        self.get_traffic_signs(trial_image)
+        #trial_image = (255 * np.random.random((1028, 700, 3))).astype(np.uint8)
+        #self.get_traffic_signs(trial_image)
 
 
     def get_traffic_signs(self, img):

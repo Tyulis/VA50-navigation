@@ -42,9 +42,9 @@ void TransformTrackNode::run() {
 }
 
 void TransformTrackNode::callback_velocity(geometry_msgs::TwistStamped::ConstPtr const& message) {
-	// x and y are swapped to adhere to ROS norms
-	arma::dvec linear_velocity = {message->twist.linear.x, -message->twist.linear.y, message->twist.linear.z};
-	arma::dvec angular_velocity = {message->twist.angular.x, -message->twist.angular.y, message->twist.angular.z};
+	arma::dmat map_transform = get_rotation(config::node::world_frame, config::node::road_frame);
+	arma::dvec linear_velocity = {message->twist.linear.x, message->twist.linear.y, message->twist.linear.z};
+	arma::dvec angular_velocity = {message->twist.angular.x, message->twist.angular.y, message->twist.angular.z};
 	m_transform_manager.add_velocity(message->header.stamp.toSec(), linear_velocity, angular_velocity);
 }
 
@@ -61,8 +61,8 @@ bool TransformTrackNode::handle_transform_batch(transformtrack::TransformBatch::
 	// So we need to rotate those back to the end_time frame
 	arma::dmat map_transform = get_rotation(config::node::world_frame, config::node::road_frame);
 	transforms.each_slice([&](arma::dmat& transform) {
-		transform.submat(0, 3, 2, 3) = map_transform.t() * transform.submat(0, 3, 2, 3);
-		transform.submat(0, 0, 2, 2) = map_transform.t() * transform.submat(0, 0, 2, 2) * map_transform;
+		transform.submat(0, 3, 2, 3) = map_transform * transform.submat(0, 3, 2, 3);
+		transform.submat(0, 0, 2, 2) = map_transform * transform.submat(0, 0, 2, 2) * map_transform.t();
 		// transform.submat(0, 0, 1, 1) = transform.submat(0, 0, 1, 1).t();
 		// transform.submat(0, 3, 1, 3) = -transform.submat(0, 3, 1, 3);
 	}, true);

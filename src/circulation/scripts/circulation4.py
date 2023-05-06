@@ -40,6 +40,7 @@ import yaml
 import cv2 as cv
 import numpy as np
 import transforms3d.quaternions as quaternions
+import transforms3d.euler
 from sklearn.neighbors import KernelDensity
 from sklearn.cluster import DBSCAN
 
@@ -93,6 +94,8 @@ class Direction:
 	FORWARD = 0b0001
 	LEFT = 0b0010
 	RIGHT = 0b0100
+	DOUBLE_LANE = 0b1000
+	FORCE_INTERSECTION = 0b10000
 
 # class TrajectoryVisualizer (object):
 # 	"""Quick-and-dirty visualization window management
@@ -265,6 +268,7 @@ class TrajectoryExtractorNode (object):
 
 		# Intersection management
 		self.next_direction = Direction.FORWARD
+		self.next_double_lane = False
 		self.intersection_hints = []
 		self.last_lane_rejoin = None
 
@@ -338,6 +342,18 @@ class TrajectoryExtractorNode (object):
 			rospy.loginfo("Updated next direction to LEFT")
 		elif message.data == Direction.RIGHT:
 			rospy.loginfo("Updated next direction to RIGHT")
+		elif message.data == Direction.DOUBLE_LANE:
+			rospy.loginfo("Next intersection has a double lane")
+			self.next_double_lane = True
+			return
+		elif message.data == Direction.FORCE_INTERSECTION:
+			if self.next_direction == Direction.LEFT:
+				self.switch_intersection(NavigationMode.LEFT_TURN, rospy.get_rostime(), 0)
+			elif self.next_direction == Direction.RIGHT:
+				self.switch_intersection(NavigationMode.RIGHT_TURN, rospy.get_rostime(), 0)
+			elif self.next_direction == Direction.FORWARD:
+				self.switch_intersection(NavigationMode.FORWARD_SKIP, rospy.get_rostime(), 0)
+			return
 		else:
 			rospy.logerr(f"Invalid direction ID received : {message.data}")
 			return
@@ -492,8 +508,15 @@ class TrajectoryExtractorNode (object):
 		<--------------------- float      : Signed distance until the rejoin distance
 		                                    (negative if the vehicle is already farther than `self.rejoin_distance`)"""
 		transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)
-		print(distances)
-		return self.rejoin_distance - distances[0]
+		if self.rejoin_distance is not None:
+			return self.rejoin_distance - distances[0]
+		else:
+			angle = transforms3d.euler.mat2euler(transforms[0][:3, :3])[2]
+			print(angle)
+			if abs(angle) > 0.8 * (np.pi / 2):
+				return -1
+			else:
+				return 1
 	
 	def next_intersection(self, image_timestamp):
 		if len(self.intersection_hints) == 0:
@@ -578,6 +601,7 @@ class TrajectoryExtractorNode (object):
 		self.navigation_mode = NavigationMode.CRUISE
 		self.next_direction = Direction.FORWARD  # Go forward by default
 		self.last_lane_rejoin = image_timestamp
+		self.next_double_lane = False
 		rospy.loginfo(f"Switching navigation mode : {self.navigation_mode}")
 	
 	def switch_intersection(self, navigation_mode, image_timestamp, intersection_distance):
@@ -1080,6 +1104,8 @@ class TrajectoryExtractorNode (object):
 		angles = np.flip(np.arange(np.pi/2, np.pi, angle_step))
 		self.current_trajectory = np.asarray((trajectory_radius*(1 + np.cos(angles)), trajectory_radius*np.sin(angles) + intersection_distance))
 		self.current_trajectory_timestamp = image_timestamp
+		self.rejoin_distance = trajeometry.line_length(self.current_trajectory)
+		self.rejoin_distance = None
 	
 	def build_left_turn_trajectory(self, image_timestamp, intersection_distance):
 		"""Precompute the trajectory to follow to turn right at an intersection
@@ -1116,8 +1142,15 @@ class TrajectoryExtractorNode (object):
 
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
 		angles = np.arange(0, np.pi/2, angle_step)
-		self.current_trajectory = np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + self.parameters["environment"]["lane-width"] + intersection_distance))
+		init_distances = np.arange(0, (1.75 if self.next_double_lane else 1) * self.parameters["environment"]["lane-width"], self.parameters["trajectory"]["trajectory-step"])
+
+		self.current_trajectory = np.hstack([
+			np.asarray((np.zeros(init_distances.size), init_distances)),
+			np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + (1.75 if self.next_double_lane else 1) * self.parameters["environment"]["lane-width"] + intersection_distance))
+		])
 		self.current_trajectory_timestamp = image_timestamp
+		self.rejoin_distance = trajeometry.line_length(self.current_trajectory)
+		self.rejoin_distance = None
 	
 	# ═══════════════════ FINAL TRAJECTORY CONSTRUCTION ═══════════════════ #
 
@@ -1192,6 +1225,12 @@ class TrajectoryExtractorNode (object):
 		"""
 		# Add the current position (0, 0) to the trajectory, otherwise the first point might be too far away
 		# and the pure pursuit will miss it
+		while trajectory_points.shape[0] > 0 and abs(np.pi / 2 - np.arctan2(trajectory_points[0, 1], trajectory_points[0, 0])) > self.parameters["trajectory"]["max-output-angle"]:
+			trajectory_points = trajectory_points[1:]
+		if trajectory_points.shape[0] == 0:
+			rospy.logerr("No remaining points after max output angle cut")
+			return
+		
 		trajectory_points = np.concatenate((np.asarray([[0, 0]]), trajectory_points), axis=0)
 
 		trajectory_array = Float64MultiArray()
