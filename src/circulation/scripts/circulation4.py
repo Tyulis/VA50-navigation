@@ -49,10 +49,8 @@ import tf2_ros
 from std_msgs.msg import UInt8, Float64MultiArray, MultiArrayDimension, Header
 from sensor_msgs.msg import Image, CameraInfo
 from transformtrack.srv import TransformBatch, TransformBatchRequest, DropVelocity, DropVelocityRequest
-from transformtrack.msg import TimeBatch
 from circulation.msg import Trajectory
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
-from visualization.msg import VizUpdate
 
 # ═══════════════════════ CYTHON EXTENSION MODULES ════════════════════════ #
 import linetrack
@@ -102,7 +100,8 @@ class Direction:
 	
 # 	def __init__(self, parameters):
 # 		self.parameters = parameters
-# 		self.publisher = rospy.Publisher(self.parameters["node"]["visualization-topic"], VizUpdate, queue_size=10)
+# 		self.lines_publisher = rospy.Publisher(self.parameters["node"]["lines-viz-topic"], Image, queue_size=10)
+# 		self.trajectory_publisher = rospy.Publisher(self.parameters["node"]["trajectory-viz-topic"], Image, queue_size=10)
 
 # 	def update_line_detection(self, be_binary, lines, left_line_index, right_line_index, markings):
 # 		"""Generate and update the left visualization from the preprocessed image and the detected lines and markings
@@ -125,17 +124,13 @@ class Direction:
 # 			for rectangle in crosswalk:
 # 				cv.fillPoly(line_viz, [rectangle.astype(int).transpose()], color)
 
-# 		self.update(line_viz, self.parameters["visualization"]["circulation-lines-id"])
+# 		message = Image(height=line_viz.shape[0], width=line_viz.shape[1], data=tuple(line_viz.flatten()), encoding="rgb8", step=line_viz.shape[1]*line_viz.shape[2])
+# 		self.lines_publisher.publish(message)
 
 # 	def update_trajectory_construction(self, viz):
 # 		"""Update the right visualization with the given image"""
-# 		self.update(viz, self.parameters["visualization"]["circulation-trajectory-id"])
-
-# 	def update(self, image, id):
-# 		"""Update the visualization window"""
-# 		image_message = Image(height=image.shape[0], width=image.shape[1], data=tuple(image.flatten()))
-# 		message = VizUpdate(id=id, image=image_message)
-# 		self.publisher.publish(message)
+# 		message = Image(height=viz.shape[0], width=viz.shape[1], data=tuple(viz.flatten()), encoding="rgb8", step=viz.shape[1]*viz.shape[2])
+# 		self.trajectory_publisher.publish(message)
 	
 
 class TrajectoryVisualizer (object):
@@ -179,12 +174,12 @@ class TrajectoryVisualizer (object):
 		if self.line_viz is None or self.trajectory_viz is None:
 			return
 		# Just merge both images
-		full_viz = cv.cvtColor(np.concatenate((self.line_viz, 255*np.ones((self.line_viz.shape[0], 30, 3), dtype=np.uint8), self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
+		full_viz = cv.cvtColor(np.concatenate((self.line_viz, np.zeros((self.line_viz.shape[0], 30, 3), dtype=np.uint8), self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
 		
 		# Uncomment these if your visualization window often stays tiny
 		## cv.namedWindow("viz", cv.WINDOW_NORMAL)
 		## cv.resizeWindow("viz", full_viz.shape[1], full_viz.shape[0])
-		cv.imshow("viz", full_viz)
+		cv.imshow("Trajectoire", full_viz)
 		cv.waitKey(1)
 
 class IntersectionHint (object):
@@ -397,8 +392,8 @@ class TrajectoryExtractorNode (object):
 		"""
 		# Build the request to the transform service, see srv/TransformBatch.srv and msg/TimeBatch.msg for info
 		request = TransformBatchRequest()
-		request.timestamps = TimeBatch(start_times=start_times, end_time=end_time)
-		request.unbias = True
+		request.start_times = start_times
+		request.end_time = end_time
 
 		# Now send the request and get the response
 		# We use persistent connections to improve efficiency, and ROS advises to implement some reconnection logic
@@ -427,9 +422,8 @@ class TrajectoryExtractorNode (object):
 		# The call was successful, get the transforms in the right format and return
 		# The transpose is because the individual matrices are transmitted in column-major order
 		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
-		start_times_unbiased = start_times  # response.timestamps.start_times
-		end_time_unbiased = end_time  # response.timestamps.end_time
-		return transforms, start_times_unbiased, end_time_unbiased
+		distances = np.asarray(response.distances)
+		return transforms, distances
 	
 	def drop_velocity(self, end_time):
 		"""Call the DropVelocity service, such that the TransformBatch service discards its old velocity data
@@ -464,7 +458,7 @@ class TrajectoryExtractorNode (object):
 		elif hint.type != existing_hint.type:
 			return False
 		
-		transforms, _, _ = self.get_map_transforms(existing_hint.position_timestamps, hint.position_timestamps[-1])
+		transforms, distances = self.get_map_transforms(existing_hint.position_timestamps, hint.position_timestamps[-1])
 		existing_positions = np.asarray([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, existing_hint.positions)])[:2]
 		existing_centroid = np.mean(existing_positions, axis=1)
 		hint_position = np.asarray(hint.positions[-1])
@@ -476,10 +470,9 @@ class TrajectoryExtractorNode (object):
 			return
 		
 		if self.last_lane_rejoin is not None:
-			transforms, _, _ = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
-			distance = np.linalg.norm(transforms[0][:3, 3])
-			print(f"Distance since rejoin : {distance}")
-			if distance < self.parameters["intersection"]["hint-detection-buffer"]:
+			transforms, distances = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
+			print(f"Distance since rejoin : {distances[0]}")
+			if distances[0] < self.parameters["intersection"]["hint-detection-buffer"]:
 				return
 			else:
 				self.last_lane_rejoin = None
@@ -498,9 +491,9 @@ class TrajectoryExtractorNode (object):
 		   - image_timestamp : rospy.Time : Timestamp to measure the distance at
 		<--------------------- float      : Signed distance until the rejoin distance
 		                                    (negative if the vehicle is already farther than `self.rejoin_distance`)"""
-		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
-		distance = np.linalg.norm(transform[:3, 3])  # Compute the distance from the translation vector in the transform matrix
-		return self.rejoin_distance - distance
+		transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)
+		print(distances)
+		return self.rejoin_distance - distances[0]
 	
 	def next_intersection(self, image_timestamp):
 		if len(self.intersection_hints) == 0:
@@ -517,7 +510,7 @@ class TrajectoryExtractorNode (object):
 		if len(hint_positions) == 0:
 			return None, None
 		
-		transforms, _, _ = self.get_map_transforms(hint_timestamps, image_timestamp)
+		transforms, distances = self.get_map_transforms(hint_timestamps, image_timestamp)
 
 		# Project everything onto the current directional vector (0, 1, 0) in local coordinates
 		current_distances = np.hstack([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, hint_positions)])[1]
@@ -921,7 +914,7 @@ class TrajectoryExtractorNode (object):
 		<------------------- list<ndarray[M]>       : Scores for each point of each local curve
 		<------------------- rospy.Time             : Unbiased target timestamp. This is an artifact of the time when the simulator gave incoherent timestamps,
 		                                              on the latest version it is same as target_timestamp"""
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(timestamps), target_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(timestamps), target_timestamp)
 		extended_lines = []
 		point_scores = []
 		for line, line_scores, transform in zip(lines, scores, transforms):
@@ -946,7 +939,7 @@ class TrajectoryExtractorNode (object):
 					extended_line = cut_line
 				extended_lines.append(extended_line)
 				point_scores.append(line_scores)
-		return extended_lines, point_scores, target_unbiased
+		return extended_lines, point_scores
 
 	def compile_trajectory(self, timestamp, left_line, left_score, right_line, right_score, viz=None):
 		"""Estimate a trajectory from the lane markings extracted from a single frame, and add it to the trajectory history buffer
@@ -1033,7 +1026,7 @@ class TrajectoryExtractorNode (object):
 		   - intersection_distance : float : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection)
 		"""
 		self.rejoin_distance = self.parameters["intersection"]["default-rejoin-distance"]
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
 		local_lines = [(transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2] for transform, trajectory in zip(transforms, self.trajectory_buffer)]
 		cut_lines = [local_line[:, local_line[1] < intersection_distance] for local_line in local_lines]
 		main_angle = self.estimate_main_angle(cut_lines)
@@ -1055,7 +1048,7 @@ class TrajectoryExtractorNode (object):
 		# Get the previously estimated trajectories, transform them into the local frame,
 		# and keep only the parts that are within the intersection
 		# Then get their mean curvature, that is used afterwards to estimate the turn curvature
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
 		curvatures = []
 		for i, (transform, trajectory) in enumerate(zip(transforms, self.trajectory_buffer)):
 			local_line = (transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2]
@@ -1098,7 +1091,7 @@ class TrajectoryExtractorNode (object):
 		# and of course goes to the left
 		self.rejoin_distance = self.parameters["intersection"]["default-rejoin-distance"]
 
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
 		curvatures = []
 		for i, (transform, trajectory) in enumerate(zip(transforms, self.trajectory_buffer)):
 			local_line = (transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2]
@@ -1133,7 +1126,7 @@ class TrajectoryExtractorNode (object):
 		   - target_timestamp : rospy.Time : Timestamp for which the final trajectory must be estimated
 		"""
 		# Transform the trajectory buffer to the local frame
-		local_trajectories, local_scores, target_unbiased = self.localize_trajectories(self.trajectory_buffer, self.trajectory_scores, self.trajectory_timestamps, target_timestamp)
+		local_trajectories, local_scores = self.localize_trajectories(self.trajectory_buffer, self.trajectory_scores, self.trajectory_timestamps, target_timestamp)
 
 		# Visualization of the per-frame trajectories
 		if viz is not None:
@@ -1149,7 +1142,7 @@ class TrajectoryExtractorNode (object):
 		if compiled_trajectory is not None and compiled_trajectory.size > 0 and compiled_trajectory.shape[1] > 3:
 			compiled_trajectory, compiled_scores = trajeometry.strip_angles(compiled_trajectory, np.pi/2, compiled_scores)
 			self.current_trajectory = trajeometry.savgol_filter(compiled_trajectory, trajeometry.savgol_window(7, compiled_trajectory.shape[1]), 2)
-			self.current_trajectory_timestamp = target_unbiased
+			self.current_trajectory_timestamp = target_timestamp
 
 			if viz is not None:
 				viz_points = self.target_to_birdeye(viz, self.current_trajectory).transpose().astype(int)
@@ -1170,8 +1163,8 @@ class TrajectoryExtractorNode (object):
 		   - image_timestamp    : rospy.Time    : Timestamp to visualize at
 		   - remaining_distance : float         : Distance until reaching the rejoin distance
 		"""
-		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
-		local_trajectory = (transform @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
+		transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)
+		local_trajectory = (transforms[0] @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
 		viz_trajectory = self.target_to_birdeye(viz, local_trajectory)
 		cv.polylines(viz, [viz_trajectory.transpose().astype(int)], False, (60, 255, 255), 2)
 		if remaining_distance is not None:

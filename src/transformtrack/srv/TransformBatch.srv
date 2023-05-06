@@ -1,4 +1,5 @@
-TimeBatch timestamps
-bool unbias
+time[] start_times
+time end_time
 ---
 std_msgs/Float64MultiArray transforms
+float64[] distances

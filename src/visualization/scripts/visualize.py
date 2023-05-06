@@ -23,13 +23,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import rospy
-from visualization.msg import VizUpdate
+from sensor_msgs.msg import Image
 
 
 class VisualizationNode (object):
 	def __init__(self, parameters):
 		self.parameters = parameters
-		self.update_subscriber = rospy.Subscriber(self.parameters["node"]["visualization-topic"], VizUpdate, self.callback_update, queue_size=10, buff_size=2**28)
+		self.lines_subscriber = rospy.Subscriber(self.parameters["node"]["lines-viz-topic"], Image, self.callback_update, self.parameters["visualization"]["circulation-lines-id"], queue_size=10, buff_size=2**28)
+		self.trajectory_subscriber = rospy.Subscriber(self.parameters["node"]["trajectory-viz-topic"], Image, self.callback_update, self.parameters["visualization"]["circulation-trajectory-id"], queue_size=10, buff_size=2**28)
+		self.trafficsigns_subscriber = rospy.Subscriber(self.parameters["node"]["trafficsigns-viz-topic"], Image, self.callback_update, self.parameters["visualization"]["trafficsigns-id"], queue_size=10, buff_size=2**28)
 		self.viz_image = 255 * np.ones((1080, 1920, 3), dtype=np.uint8)
 
 		self.rects = {
@@ -44,11 +46,11 @@ class VisualizationNode (object):
 		plt.imshow(self.viz_image)
 		rospy.loginfo("Ready")
 
-	def callback_update(self, message):
-		image = np.frombuffer(message.image.data, dtype=np.uint8).reshape((message.image.height, message.image.width, 3))
-		if message.id == self.parameters["visualization"]["trafficsigns-id"]:
+	def callback_update(self, message, id):
+		image = np.frombuffer(message.data, dtype=np.uint8).reshape((message.height, message.width, 3))
+		if id == self.parameters["visualization"]["trafficsigns-id"]:
 			image = image[200:600]
-		rect = self.rects[message.id]
+		rect = self.rects[id]
 		image = cv.resize(image, (rect[2], rect[3]))
 		self.viz_image[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2]] = image
 		plt.imshow(self.viz_image)

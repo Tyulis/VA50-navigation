@@ -20,7 +20,6 @@
 #include "geometry_msgs/TwistStamped.h"
 
 #include "config.h"
-#include "transformtrack/TimeBatch.h"
 #include "transformtrack/DropVelocity.h"
 #include "transformtrack/TransformBatch.h"
 #include "transformtrack/TransformManager.h"
@@ -37,7 +36,7 @@ class TransformTrackNode {
 		bool handle_drop_velocity(transformtrack::DropVelocity::Request& request, transformtrack::DropVelocity::Response& response);
 
 	private:
-		arma::fmat get_rotation(std::string const& source_frame, std::string const& target_frame);
+		arma::dmat get_rotation(std::string const& source_frame, std::string const& target_frame);
 
 		ros::NodeHandle m_node;
 		ros::Subscriber m_velocity_subscriber;

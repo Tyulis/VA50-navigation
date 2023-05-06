@@ -41,15 +41,15 @@ DISTANCE_SCALE_MIN = 0
 DISTANCE_SCALE_MAX = 160
 
 class DistanceExtractor (object):
-	def __init__(self, parameters):
-
+	def __init__(self, parameters, no_lights):
 		self.parameters = parameters
+		self.no_lights = no_lights
 
 		self.image_topic = self.parameters["node"]["image-topic"]
 		self.camerainfo_topic = self.parameters["node"]["camerainfo-topic"]
 		self.pointcloud_topic = self.parameters["node"]["pointcloud-topic"]
 		self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
-		self.visualization_topic = self.parameters["node"]["visualization-topic"]
+		self.visualization_topic = self.parameters["node"]["trafficsigns-viz-topic"]
 
 		# Initialize the topic publisher
 		self.traffic_sign_publisher = rospy.Publisher(self.traffic_sign_topic, TrafficSignStatus, queue_size=10)
@@ -81,7 +81,7 @@ class DistanceExtractor (object):
 		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
 		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
 		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
-		self.visualization_publisher = rospy.Publisher(self.visualization_topic, VizUpdate, queue_size=10)
+		self.visualization_publisher = rospy.Publisher(self.visualization_topic, Image, queue_size=10)
 
 		rospy.loginfo("Everything ready")	
 
@@ -176,8 +176,9 @@ class DistanceExtractor (object):
 
 		# Get the annotated image and detected traffic signs labels and coordinates
 		img, traffic_signs = self.traffic_sign_detector.get_traffic_signs(img)
-		img, traffic_lights = detect_traffic_lights(img)
-		traffic_signs.extend(traffic_lights)
+		if not self.no_lights:
+			img, traffic_lights = detect_traffic_lights(img)
+			traffic_signs.extend(traffic_lights)
 
 		# Visualize the lidar data projection onto the image
 		for i, point in enumerate(lidar_coordinates_in_image.T):
@@ -226,21 +227,18 @@ class DistanceExtractor (object):
 			self.traffic_sign_publisher.publish(message)
 		
 		#image_message = Image(height=img.shape[0], width=img.shape[1], data=tuple(img.flatten()))
-		#message = VizUpdate(id=self.parameters["visualization"]["trafficsigns-id"], image=image_message)
-		#self.visualization_publisher.publish(message)
+		#self.visualization_publisher.publish(image_message)
 		img = cv.cvtColor(self.latest_image, cv.COLOR_RGB2BGR)
-		cv.imshow('viz', img)
-
+		cv.imshow('Panneaux', img)
 		cv.waitKey(5)
 
 if __name__ == "__main__":
-
 	if len(sys.argv) < 2:
-		print(f"Usage : {sys.argv[0]} <parameter-file>")
+		print(f"Usage : {sys.argv[0]} <parameter-file> [--no-lights]")
 	else:
 		with open(sys.argv[1], "r") as parameterfile:
 			parameters = yaml.load(parameterfile, yaml.Loader)
 		rospy.init_node("traffic_sign_distances")
-		node = DistanceExtractor(parameters)
+		node = DistanceExtractor(parameters, "--no-lights" in sys.argv)
 		rospy.spin()
 

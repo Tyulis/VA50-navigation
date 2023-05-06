@@ -62,7 +62,7 @@ if [[ $1 == pack ]] || [[ $2 == pack ]] || [[ $3 == pack ]] || [[ $4 == pack ]];
 	cp ../src/circulation/CMakeLists.txt src/circulation/CMakeLists.txt
 	cp ../build_circulation.sh build_circulation.sh
 	cp ../circulation4.yml circulation4.yml
-	cp ../circulation4-1.yml circulation4-1.yml
+	cp ../circulation4-2.yml circulation4-2.yml
 	cp ../road_network.json road_network.json
 	cp ../requirements.txt requirements.txt
 	tar -czvf ../circulation_package-`date +%Y%m%d-%H%M%S`.tar.gz *

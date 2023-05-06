@@ -13,7 +13,6 @@
 //   limitations under the License.
 
 #include "transformtrack/TransformManager.h"
-#include <iostream>
 
 // NOTE : Quaternions here are stored in order (w, x, y, z)
 
@@ -62,14 +61,16 @@ void TransformManager::drop_velocity(double end_time) {
   * we need the additional precision internally because the numerical stability of the whole thing is awful
   * - start_times : arma::dvec[N]        : Start timestamps in seconds with decimal part
   * - end_time    : double               : Target timestamp in seconds with decimal part
-  * <-------------- arma::fcube[N, 4, 4] : 4×4 3D homogeneous transform matrices from each timestamp in `start_times` to `end_time` */
-arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, double end_time) {
+  * <-------------- arma::dcube[N, 4, 4] : 4×4 3D homogeneous transform matrices from each timestamp in `start_times` to `end_time`
+  * <-------------- arma::dvec[N]        : Distances from each timestamp in `start_times` to `end_time` */
+std::tuple<arma::dcube, arma::dvec> TransformManager::get_map_transforms(arma::dvec const& start_times, double end_time) {
 	// Can’t do anything without data
 	assert(start_times.n_elem > 0);
 	assert(m_time_buffer.size() > 0);
 
 	// Buffers to store the translation vectors and rotation quaternions for each element of `start_times`
 	int num_starts = start_times.n_elem;
+	arma::dvec distances(num_starts, arma::fill::zeros);
 	arma::dmat translation(3, num_starts, arma::fill::zeros);
 	arma::dmat rotation(4, num_starts, arma::fill::zeros);
 	rotation.row(0).fill(1.0); // Start with w = 1, x = 0, y = 0, z = 0 quaternions
@@ -83,15 +84,15 @@ arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, 
 	while (current_time > m_time_buffer[buffer_index]) {
 		// The current start time is after the last known velocity data, extrapolate and go to the next start time
 		if (start_times[start_index] > m_time_buffer[buffer_index]) {
-			extrapolate_linear_velocity_reverse(translation.col(start_index), m_linear_buffer.col(buffer_index), current_time - start_times[start_index]);
+			extrapolate_linear_velocity_reverse(distances(start_index), translation.col(start_index), m_linear_buffer.col(buffer_index), current_time - start_times[start_index]);
 			integrate_angular_velocity_reverse_direct(rotation.col(start_index), m_angular_buffer.col(buffer_index), current_time - start_times[start_index]);
 			current_time = start_times[start_index];
-			start_index = next_start_time(translation, rotation, start_index);
+			start_index = next_start_time(distances, translation, rotation, start_index);
 		}
 
 		// The current start time is before the last known velocity data, extrapolate that part and go to the interpolation part
 		else {
-			extrapolate_linear_velocity_reverse(translation.col(start_index), m_linear_buffer.col(buffer_index), current_time - m_time_buffer[buffer_index]);
+			extrapolate_linear_velocity_reverse(distances(start_index), translation.col(start_index), m_linear_buffer.col(buffer_index), current_time - m_time_buffer[buffer_index]);
 			integrate_angular_velocity_reverse_direct(rotation.col(start_index), m_angular_buffer.col(buffer_index), current_time - m_time_buffer[buffer_index]);
 			current_time = m_time_buffer[buffer_index];
 		}
@@ -133,17 +134,17 @@ arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, 
 
 		// Handle the start_times that are within this time period
 		while (start_times[start_index] > period_start && start_index >= 0) {
-			integrate_linear_velocity_reverse(translation.col(start_index), linear_start, linear_end, period_start, period_end, start_times[start_index], current_time);
+			integrate_linear_velocity_reverse(distances(start_index), translation.col(start_index), linear_start, linear_end, period_start, period_end, start_times[start_index], current_time);
 			integrate_angular_velocity_reverse(rotation.col(start_index), angular_start, angular_end, period_start, period_end, start_times[start_index], current_time);
 			current_time = start_times[start_index];
-			start_index = next_start_time(translation, rotation, start_index);
+			start_index = next_start_time(distances, translation, rotation, start_index);
 		}
 
 		if (start_index < 0)
 			break;
 
 		// Then the one that goes through to the previous time period
-		integrate_linear_velocity_reverse(translation.col(start_index), linear_start, linear_end, period_start, period_end, period_start, current_time);
+		integrate_linear_velocity_reverse(distances(start_index), translation.col(start_index), linear_start, linear_end, period_start, period_end, period_start, current_time);
 		integrate_angular_velocity_reverse(rotation.col(start_index), angular_start, angular_end, period_start, period_end, period_start, current_time);
 		current_time = period_start;
 	}
@@ -151,15 +152,15 @@ arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, 
 	// Now, we are just before the beginning of our velocity data
 	// Some start_times might be before it, so we also need to extrapolate in that direction
 	while (start_index >= 0) {
-		extrapolate_linear_velocity_reverse(translation.col(start_index), linear_start, current_time - start_times[start_index]);
+		extrapolate_linear_velocity_reverse(distances(start_index), translation.col(start_index), linear_start, current_time - start_times[start_index]);
 		integrate_angular_velocity_reverse_direct(rotation.col(start_index), angular_start, current_time - start_times[start_index]);
 		current_time = start_times[start_index];
-		start_index = next_start_time(translation, rotation, start_index);
+		start_index = next_start_time(distances, translation, rotation, start_index);
 	}
 
 	// At this point, we have stored all of our transformations in the linear and angular transformation buffers
 	// Now, let’s build transformation matrices out of them
-	arma::fcube transforms(4, 4, num_starts);
+	arma::dcube transforms(4, 4, num_starts);
 	for (int i = 0; i < num_starts; i++) {
 		// Formula for the rotation matrix from a quaternion from here :
 		// https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix
@@ -169,27 +170,27 @@ arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, 
 		
 		// Rotation matrix from the resulting quaternion
 		// We are in reverse, so this is the inverse (transposed) matrix
-		transforms(0, 0, i) = static_cast<float>(1 - 2*s * (rot_y * rot_y + rot_z * rot_z));
-		transforms(1, 0, i) = static_cast<float>(    2*s * (rot_x * rot_y - rot_z * rot_w));
-		transforms(2, 0, i) = static_cast<float>(    2*s * (rot_x * rot_z + rot_y * rot_w));
-		transforms(0, 1, i) = static_cast<float>(    2*s * (rot_x * rot_y + rot_z * rot_w));
-		transforms(1, 1, i) = static_cast<float>(1 - 2*s * (rot_x * rot_x + rot_z * rot_z));
-		transforms(2, 1, i) = static_cast<float>(    2*s * (rot_y * rot_z - rot_x * rot_w));
-		transforms(0, 2, i) = static_cast<float>(    2*s * (rot_x * rot_z - rot_y * rot_w));
-		transforms(1, 2, i) = static_cast<float>(    2*s * (rot_y * rot_z + rot_x * rot_w));
-		transforms(2, 2, i) = static_cast<float>(1 - 2*s * (rot_x * rot_x + rot_y * rot_y));
+		transforms(0, 0, i) = 1 - 2*s * (rot_y * rot_y + rot_z * rot_z);
+		transforms(1, 0, i) =     2*s * (rot_x * rot_y - rot_z * rot_w);
+		transforms(2, 0, i) =     2*s * (rot_x * rot_z + rot_y * rot_w);
+		transforms(0, 1, i) =     2*s * (rot_x * rot_y + rot_z * rot_w);
+		transforms(1, 1, i) = 1 - 2*s * (rot_x * rot_x + rot_z * rot_z);
+		transforms(2, 1, i) =     2*s * (rot_y * rot_z - rot_x * rot_w);
+		transforms(0, 2, i) =     2*s * (rot_x * rot_z - rot_y * rot_w);
+		transforms(1, 2, i) =     2*s * (rot_y * rot_z + rot_x * rot_w);
+		transforms(2, 2, i) = 1 - 2*s * (rot_x * rot_x + rot_y * rot_y);
 
 		// Translation vector
-		transforms(0, 3, i) = static_cast<float>(translation(0, i));
-		transforms(1, 3, i) = static_cast<float>(translation(1, i));
-		transforms(2, 3, i) = static_cast<float>(translation(2, i));
+		transforms(0, 3, i) = translation(0, i);
+		transforms(1, 3, i) = translation(1, i);
+		transforms(2, 3, i) = translation(2, i);
 
 		// Affine part
-		transforms(3, 0, i) = transforms(3, 1, i) = transforms(3, 2, i) = 0.0f;
-		transforms(3, 3, i) = 1.0f;
+		transforms(3, 0, i) = transforms(3, 1, i) = transforms(3, 2, i) = 0.0;
+		transforms(3, 3, i) = 1.0;
 	}
 
-	return transforms;
+	return {transforms, distances};
 }
 
 
@@ -197,8 +198,10 @@ arma::fcube TransformManager::get_map_transforms(arma::dvec const& start_times, 
   * - translation  : arma::subview_col<double>[3]& : Translation vector to update
   * - linear_speed : arma::dvec[3]                 : Linear speed to apply
   * - timedelta    : double                        : Duration over which to apply the linear speed */
-void TransformManager::extrapolate_linear_velocity_reverse(arma::subview_col<double>&& translation, arma::dvec const& linear_speed, double timedelta) {
-	translation -= timedelta * linear_speed;
+void TransformManager::extrapolate_linear_velocity_reverse(double& distance, arma::subview_col<double>&& translation, arma::dvec const& linear_speed, double timedelta) {
+	arma::dvec vector = timedelta * linear_speed;
+	translation -= vector;
+	distance += arma::norm(vector);
 }
 
 /** Integrate the linear velocity to compute the change in position between two time points
@@ -210,14 +213,16 @@ void TransformManager::extrapolate_linear_velocity_reverse(arma::subview_col<dou
   * - period_end   : double                        : End of the velocity data time period
   * - start_time   : double                        : Time point at which to start the integration
   * - end_time     : double                        : Time point at which to end the integration */
-void TransformManager::integrate_linear_velocity_reverse(arma::subview_col<double>&& translation, arma::dvec const& linear_start, arma::dvec const& linear_end, double period_start, double period_end, double start_time, double end_time) {
+void TransformManager::integrate_linear_velocity_reverse(double& distance, arma::subview_col<double>&& translation, arma::dvec const& linear_start, arma::dvec const& linear_end, double period_start, double period_end, double start_time, double end_time) {
 	// We have the linear speed at the beginning and at the end of the time period,
 	// so we’ve got initial speed and constant acceleration
 	// We can thus integrate this into a quadratic formula for the position
 	// As always, we are in reverse so -=
 	// It *is* (end_time + start_time) next to the acceleration, it’s because here (end_time² - start_time²) got factored into (end_time - start_time)(end_time + start_time)
 	// and we need to subtract 2*period_start as it needs to be relative to period_start
-	translation -= (end_time - start_time) * (linear_start + (end_time + start_time - 2*period_start) * (linear_end - linear_start) / (2*(period_end - period_start)));
+	arma::dvec vector = (end_time - start_time) * (linear_start + (end_time + start_time - 2*period_start) * (linear_end - linear_start) / (2*(period_end - period_start)));
+	translation -= vector;
+	distance += arma::norm(vector);
 }
 
 // Now here’s the tricky part : integrating the linear velocity is trivial, but the angular velocity is on a whole other level
@@ -276,9 +281,10 @@ void TransformManager::integrate_angular_velocity_reverse(arma::subview_col<doub
 	* - rotation    : arma::dmat[4, num_starts] : Array of rotations
 	* - start_index : int                       : Current start index. If it is 0, do not copy the transform and return a negative index
 	* <-------------- int                       : Next start index */
-int TransformManager::next_start_time(arma::dmat& translation, arma::dmat& rotation, int start_index) {
+int TransformManager::next_start_time(arma::dvec& distances, arma::dmat& translation, arma::dmat& rotation, int start_index) {
 	// Copy if there is a next start time
 	if (start_index > 0) {
+		distances(start_index - 1) = distances(start_index);
 		translation.col(start_index - 1) = translation.col(start_index);
 		rotation.col(start_index - 1) = rotation.col(start_index);
 	}
