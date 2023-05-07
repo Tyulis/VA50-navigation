@@ -42,9 +42,10 @@ DISTANCE_SCALE_MIN = 0
 DISTANCE_SCALE_MAX = 160
 
 class DistanceExtractor (object):
-	def __init__(self, parameters, no_lights):
+	def __init__(self, parameters, no_lights, no_signs):
 		self.parameters = parameters
 		self.no_lights = no_lights
+		self.no_signs = no_signs
 
 		self.image_topic = self.parameters["node"]["image-topic"]
 		self.camerainfo_topic = self.parameters["node"]["camerainfo-topic"]
@@ -62,7 +63,8 @@ class DistanceExtractor (object):
 
 		# Initialize the traffic sign detector
 		self.traffic_sign_detector = None
-		self.traffic_sign_detector = TrafficSignDetector()
+		if not self.no_signs:
+			self.traffic_sign_detector = TrafficSignDetector()
 
 		# At first everything is null, no image can be produces if one of those is still null
 		self.image_frame = None
@@ -205,7 +207,7 @@ class DistanceExtractor (object):
 		# If some info is missing, can’t output an image
 		if (self.image_frame is None or self.pointcloud_frame is None or
 			self.latest_image is None or self.latest_pointcloud is None or
-			self.camera_to_image is None or self.traffic_sign_detector is None):
+			self.camera_to_image is None):  # or self.traffic_sign_detector is None):
 			return
 
 		self.lidar_to_camera = self.get_transform(self.pointcloud_frame, self.image_frame)
@@ -227,7 +229,10 @@ class DistanceExtractor (object):
 		camera_pointcloud = self.lidar_to_camera @ pointcloud
 
 		# Get the annotated image and detected traffic signs labels and coordinates
-		img, traffic_signs = self.traffic_sign_detector.get_traffic_signs(img)
+		traffic_signs = []
+		if not self.no_signs:
+			img, signs = self.traffic_sign_detector.get_traffic_signs(img)
+			traffic_signs.extend(signs)
 		if not self.no_lights:
 			img, traffic_lights = detect_traffic_lights(img)
 			traffic_signs.extend(traffic_lights)
@@ -280,17 +285,17 @@ class DistanceExtractor (object):
 		
 		#image_message = Image(height=img.shape[0], width=img.shape[1], data=tuple(img.flatten()))
 		#self.visualization_publisher.publish(image_message)
-		img = cv.cvtColor(self.latest_image, cv.COLOR_RGB2BGR)
+		img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
 		cv.imshow('Panneaux', img)
 		cv.waitKey(5)
 
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
-		print(f"Usage : {sys.argv[0]} <parameter-file> [--no-lights]")
+		print(f"Usage : {sys.argv[0]} <parameter-file> [--no-lights] [--no-signs]")
 	else:
 		with open(sys.argv[1], "r") as parameterfile:
 			parameters = yaml.load(parameterfile, yaml.Loader)
 		rospy.init_node("traffic_sign_distances")
-		node = DistanceExtractor(parameters, "--no-lights" in sys.argv)
+		node = DistanceExtractor(parameters, "--no-lights" in sys.argv, "--no-signs" in sys.argv)
 		rospy.spin()
 

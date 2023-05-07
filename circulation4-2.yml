@@ -40,6 +40,7 @@ control:
   Kp: 0.5
   dt: 0.1
   WB: 2.588
+  brake-distance: 10
 
 # Values to expect from the overall environment
 environment:
@@ -50,7 +51,7 @@ environment:
 birdeye:
   x-range: 15                                              # The bird-eye view encompasses [-x-range, +x-range] meters on the X axis (left-right)
   y-range: 21.8                                            # The bird-eye view encompasses [+roi-y  , +y-range] meters on the Y axis (forward)
-  roi-y: 4.8                                               # Closest distance forward for meaningful data from the camera
+  roi-y: 3                                                 # Closest distance forward for meaningful data from the camera
   birdeye-size: 500                                        # Height of the bird-eye view in pixels. The width is deduced such that the y-range to x-range proportions are kept
 
 # Image preprocessing parameters
@@ -73,7 +74,9 @@ intersection:
   default-rejoin-distance: 15                              # Try to rejoin a lane after this distance in meters travelled in the intersection
   min-turn-radius: 5                                       # Clamp the turn radii between those two, in meters
   max-turn-radius: 25                                      # /
+  default-turn-radius: 11
   hint-detection-buffer: 15                                # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  min-confidence: 0.9
 
 # Trajectory construction parameters
 trajectory:
@@ -89,6 +92,7 @@ trajectory:
   line-score-threshold: 0.5                                # Unused, left for compatibility
   trajectory-score-threshold: 0.5                          # Points that are below this score are disregarded by the trajectory compilation routine
   max-output-angle: 0.279
+  max-parallel-distance: 0.9
 
 # Line detection parameters
 find-lines-parameters:

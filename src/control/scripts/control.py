@@ -84,7 +84,7 @@ class PurePursuitController (object):
         self.speed_publisher = rospy.Publisher(self.speed_topic, Float32, queue_size=10)
         self.steering_angle_publisher = rospy.Publisher(self.steering_angle_topic, Float32, queue_size=10)
         self.direction_publisher = rospy.Publisher(self.direction_topic, UInt8, queue_size=1)
-        self.speed_cap_publisher = rospy.Publisher(self.speed_cap_topic, Float32, queue_size=10)
+        #self.speed_cap_publisher = rospy.Publisher(self.speed_cap_topic, Float32, queue_size=10)
 
         rospy.loginfo("Everything ready")
 
@@ -163,15 +163,14 @@ class PurePursuitController (object):
                 position = np.c_[[sign.x, sign.y, sign.z, 1]]
                 transforms, distances = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
                 current_position = transforms[0] @ position
-                distance = np.linalg.norm(current_position[:2])
+                distance = max(0, current_position[1, 0] - (5 if sign.type in ("light-red", "light-orange") else 2))
+                if distance > self.parameters["control"]["brake-distance"]:
+                    return
 
                 self.is_stop_need = True
                 self.stop_type = 'light' if sign.type in ('light-red', 'light-orange') else 'sign'
-                print(f"{self.stop_type} : {distance}, {data.header.stamp} -> {rospy.get_rostime()} m")
-                print(transforms[0])
                 nb_speed_values_to_stop = int((distance / self.real_speed) * RATE)
                 self.speeds_to_stop = np.linspace(start = self.real_speed, stop = 0, num = nb_speed_values_to_stop)
-                print(self.speeds_to_stop)
                 self.current_stop_index = 0
 
             # Filter traffic signs where a direction is mandatory and publish on the direction topic
@@ -204,9 +203,9 @@ class PurePursuitController (object):
                 # Calc control input
                 vi = self.speed_control()
                 di, self.target_ind = self.pure_pursuit_steer_control(self.target_ind)
-                print(f"vi={vi}, self.real_speed={self.real_speed}")
+                print(f"vi={vi}, self.real_speed={self.real_speed}, self.target_speed={self.target_speed}")
 
-                self.speed_cap_publisher.publish(1000)
+                #self.speed_cap_publisher.publish(1000)
                 self.speed_publisher.publish(vi)  # Control speed
                 self.steering_angle_publisher.publish(di*180/math.pi) # Control steering angle
 

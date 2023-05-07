@@ -607,4 +607,36 @@ cpdef double mean_curvature(double[:, :] curve):
 		curvature_sum += vector_angle(prev_vector, next_vector) / ((prev_vector_norm + next_vector_norm) / 2)
 		valid_points += 1
 	return curvature_sum / valid_points
+
+cpdef mean_parallel_distance(double[:, :] curve1, double[:, :] curve2):
+	cdef double[:, :] longest_line, shortest_line
+	if line_length(curve1) > line_length(curve2):
+		longest_line = curve1
+		shortest_line = curve2
+	else:
+		longest_line = curve2
+		shortest_line = curve1
 	
+	# Now compute the average orthogonal distance and the average angle difference
+	cdef double paralleldiff = 0, vector1_x, vector1_y, vector2_x, vector2_y
+	cdef int valid_points = 0
+	cdef Py_ssize_t p
+	cdef _ProjectionIndex projection
+
+	for p in range(longest_line.shape[1] - 1):
+		projection = _project_on_curve_index(longest_line[0, p], longest_line[1, p], shortest_line, False, 0)
+		if projection.index < 0:
+			continue
+		
+		vector1_x = longest_line[0, p+1] - longest_line[0, p]
+		vector1_y = longest_line[1, p+1] - longest_line[1, p]
+		vector2_x = shortest_line[0, projection.index+1] - shortest_line[0, projection.index]
+		vector2_y = shortest_line[1, projection.index+1] - shortest_line[1, projection.index]
+		
+		paralleldiff += sqrt((longest_line[0, p] - (shortest_line[0, projection.index] + vector2_x*projection.vector_factor))**2 + (longest_line[1, p] - (shortest_line[1, projection.index] + vector2_y*projection.vector_factor))**2)
+		valid_points += 1
+
+	if valid_points == 0:
+		return np.inf
+	else:
+		return paralleldiff / valid_points
