@@ -159,6 +159,8 @@ class TrajectoryVisualizer (object):
 	def __init__(self, parameters):
 		self.line_viz = None
 		self.trajectory_viz = None
+		self.message = None
+		self.message_time = None
 
 	def update_line_detection(self, be_binary, lines, left_line_index, right_line_index, markings):
 		"""Generate and update the left visualization from the preprocessed image and the detected lines and markings
@@ -187,6 +189,10 @@ class TrajectoryVisualizer (object):
 		"""Update the right visualization with the given image"""
 		self.trajectory_viz = viz
 		self.update()
+	
+	def print_message(self, message):
+		self.message = message
+		self.message_time = time.time()
 
 	def update(self):
 		"""Update the visualization window"""
@@ -195,6 +201,12 @@ class TrajectoryVisualizer (object):
 		# Just merge both images
 		# full_viz = cv.cvtColor(np.concatenate((self.line_viz, np.zeros((self.line_viz.shape[0], 30, 3), dtype=np.uint8), self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
 		full_viz = cv.cvtColor(np.concatenate((self.line_viz, self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
+		if self.message is not None:
+			if time.time() > self.message_time + 5:
+				self.message = None
+				self.message_time = None
+			else:
+				cv.putText(full_viz, self.message, (5, 40), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 		
 		# Uncomment these if your visualization window often stays tiny
 		## cv.namedWindow("viz", cv.WINDOW_NORMAL)
@@ -360,15 +372,19 @@ class TrajectoryExtractorNode (object):
 		"""
 		if message.data == Direction.FORWARD:
 			rospy.loginfo("Updated next direction to FORWARD")
+			self.visualisation.print_message("Manually set next direction : FORWARD")
 		elif message.data == Direction.LEFT:
 			rospy.loginfo("Updated next direction to LEFT")
+			self.visualisation.print_message("Manually set next direction : LEFT")
 		elif message.data == Direction.RIGHT:
 			rospy.loginfo("Updated next direction to RIGHT")
+			self.visualisation.print_message("Manually set next direction : RIGHT")
 		elif message.data == Direction.DOUBLE_LANE:
 			rospy.loginfo("Next intersection has a double lane")
 			self.next_double_lane = True
 			return
 		elif message.data == Direction.FORCE_INTERSECTION:
+			self.visualisation.print_message("Manually force intersection mode")
 			if self.next_direction == Direction.LEFT:
 				self.switch_intersection(NavigationMode.INTERSECTION_LEFT, rospy.get_rostime(), 0)
 			elif self.next_direction == Direction.RIGHT:
@@ -1091,9 +1107,8 @@ class TrajectoryExtractorNode (object):
 			if self.current_trajectory is not None and not self.navigation_mode.is_intersection():
 				transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], timestamp)
 				local_current_trajectory = (transforms[0] @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
-				local_current_trajectory = local_current_trajectory[:, local_current_trajectory[1] > 0]
-				if local_current_trajectory.shape[1] > 3:
-					print(local_current_trajectory)
+				local_current_trajectory = local_current_trajectory[:, local_current_trajectory[1] > self.parameters["birdeye"]["roi-y"]]
+				if local_current_trajectory.shape[1] > 4:
 					parallel_distance = trajeometry.mean_parallel_distance(filtered_trajectory, local_current_trajectory)
 					if parallel_distance > self.parameters["trajectory"]["max-parallel-distance"]:
 						if viz is not None:

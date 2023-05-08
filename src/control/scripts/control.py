@@ -19,7 +19,7 @@ import math
 
 import yaml
 import numpy as np
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 import rospy
 from std_msgs.msg import Float32, String, UInt8
@@ -174,12 +174,12 @@ class PurePursuitController (object):
                 self.current_stop_index = 0
 
             # Filter traffic signs where a direction is mandatory and publish on the direction topic
-            elif sign.type in ('right-only', 'keep-right'):
-                self.direction_publisher.publish(0b0100)
-            elif sign.type in ('left-only', 'keep-left'):
-                self.direction_publisher.publish(0b0010)
-            elif sign.type == 'ahead-only':
-                self.direction_publisher.publish(0b0001)
+            # elif sign.type in ('right-only', 'keep-right'):
+            #    self.direction_publisher.publish(0b0100)
+            # elif sign.type in ('left-only', 'keep-left'):
+            #    self.direction_publisher.publish(0b0010)
+            # elif sign.type == 'ahead-only':
+            #    self.direction_publisher.publish(0b0001)
             elif sign.type == 'light-green' and self.is_stop_need and self.stop_type == 'light':
                 self.is_stop_need = False
 

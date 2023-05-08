@@ -74,7 +74,7 @@ intersection:
   default-rejoin-distance: 15                              # Try to rejoin a lane after this distance in meters travelled in the intersection
   min-turn-radius: 5                                       # Clamp the turn radii between those two, in meters
   max-turn-radius: 25                                      # /
-  default-turn-radius: 11
+  default-turn-radius: 12
   hint-detection-buffer: 15                                # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
   min-confidence: 0.9
 
