@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
+
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 import sys
 import cProfile
+from threading import Lock
 
 import yaml
 import cv2 as cv
@@ -16,6 +32,7 @@ from sensor_msgs.msg import Image, PointCloud2, CameraInfo
 
 import fish2bird
 from trafficsigns.msg import TrafficSign, TrafficSignStatus
+from transformtrack.srv import TransformBatch, TransformBatchRequest
 
 from traffic_sign_detection import TrafficSignDetector
 from traffic_light_detection import detect_traffic_lights
@@ -25,14 +42,16 @@ DISTANCE_SCALE_MIN = 0
 DISTANCE_SCALE_MAX = 160
 
 class DistanceExtractor (object):
-	def __init__(self, parameters):
-
+	def __init__(self, parameters, no_lights, no_signs):
 		self.parameters = parameters
+		self.no_lights = no_lights
+		self.no_signs = no_signs
 
 		self.image_topic = self.parameters["node"]["image-topic"]
 		self.camerainfo_topic = self.parameters["node"]["camerainfo-topic"]
 		self.pointcloud_topic = self.parameters["node"]["pointcloud-topic"]
 		self.traffic_sign_topic = self.parameters["node"]["traffic-sign-topic"]
+		self.visualization_topic = self.parameters["node"]["trafficsigns-viz-topic"]
 
 		# Initialize the topic publisher
 		self.traffic_sign_publisher = rospy.Publisher(self.traffic_sign_topic, TrafficSignStatus, queue_size=10)
@@ -44,7 +63,8 @@ class DistanceExtractor (object):
 
 		# Initialize the traffic sign detector
 		self.traffic_sign_detector = None
-		self.traffic_sign_detector = TrafficSignDetector()
+		if not self.no_signs:
+			self.traffic_sign_detector = TrafficSignDetector()
 
 		# At first everything is null, no image can be produces if one of those is still null
 		self.image_frame = None
@@ -60,10 +80,17 @@ class DistanceExtractor (object):
 		self.image_stamp = None
 		self.pointcloud_stamp = None
 
+		rospy.loginfo("Waiting for the TransformBatch service...")
+		self.transform_service = None
+		rospy.wait_for_service(self.parameters["node"]["transform-service-name"])
+		self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
+		self.transform_service_lock = Lock()
+
 		# Initialize the topic subscribers
-		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image)
+		self.image_subscriber = rospy.Subscriber(self.image_topic, Image, self.callback_image, queue_size=1, buff_size=2**28)
 		self.camerainfo_subscriber = rospy.Subscriber(self.camerainfo_topic, CameraInfo, self.callback_camerainfo)
 		self.pointcloud_subscriber = rospy.Subscriber(self.pointcloud_topic, PointCloud2, self.callback_pointcloud)
+		self.visualization_publisher = rospy.Publisher(self.visualization_topic, Image, queue_size=10)
 
 		rospy.loginfo("Everything ready")	
 
@@ -87,6 +114,51 @@ class DistanceExtractor (object):
 			np.concatenate((rotation_matrix, translation_vector), axis=1),
 			np.asarray((0, 0, 0, 1)).reshape((1, 4))
 		), axis=0)
+
+	def get_map_transforms(self, start_times, end_time):
+		"""Get a batch of transforms of the vehicle frame from the given `start_times` to `end_time`
+		   - start_times : list<rospy.Time> : Timestamps to get the transforms from
+		   - end_time    : rospy.Time       : Target timestamp, to get the transforms to
+		<----------------- ndarray[N, 4, 4] : 3D homogeneous transform matrices to transform points in the vehicle frame
+		                                      at `start_times[i]` to the vehicle frame at `end_time`
+		<----------------- list<rospy.Time> : Unbiased start times. This is an artifact from the time when the simulator gave incoherent timestamps,
+		                                      same as `start_times` on the latest versions
+		<----------------- rospy.Time       : Unbiased end time, same as end_time on the latest versions of the simulator
+		"""
+		# Build the request to the transform service, see srv/TransformBatch.srv and msg/TimeBatch.msg for info
+		request = TransformBatchRequest()
+		request.start_times = start_times
+		request.end_time = end_time
+
+		# Now send the request and get the response
+		# We use persistent connections to improve efficiency, and ROS advises to implement some reconnection logic
+		# in case the network gets in the way, so in case of disconnection, retry 10 times to reconnect then fail
+		tries = 0
+		while True:
+			try:
+				# Apparently, when a call to the service is pending, the node is free to service other callbacks,
+				# including callback_trafficsign that also call this service
+				# So with the traffic signs subscriber active, it’s only a matter of time until both get to their transform service call concurrently
+				# For some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
+				# So let’s throw in a lock to prevent ROS from killing itself
+				with self.transform_service_lock:
+					response = self.transform_service(request)
+				break
+			except rospy.ServiceException as exc:
+				if tries > 10:
+					rospy.logerr(f"Connection to service {self.parameters['node']['transform-service-name']} failed {tries} times, skipping")
+					rospy.logerr(f"Failed with error : {exc}")
+					raise RuntimeError("Unable to connect to the transform service")
+				rospy.logerr(f"Connection to service {self.parameters['node']['transform-service-name']} lost, reconnecting...")
+				self.transform_service.close()
+				self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
+				tries += 1
+		
+		# The call was successful, get the transforms in the right format and return
+		# The transpose is because the individual matrices are transmitted in column-major order
+		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
+		distances = np.asarray(response.distances)
+		return transforms, distances
 
 
 	def callback_image(self, data):
@@ -135,7 +207,7 @@ class DistanceExtractor (object):
 		# If some info is missing, can’t output an image
 		if (self.image_frame is None or self.pointcloud_frame is None or
 			self.latest_image is None or self.latest_pointcloud is None or
-			self.camera_to_image is None or self.traffic_sign_detector is None):
+			self.camera_to_image is None):  # or self.traffic_sign_detector is None):
 			return
 
 		self.lidar_to_camera = self.get_transform(self.pointcloud_frame, self.image_frame)
@@ -146,6 +218,9 @@ class DistanceExtractor (object):
 		img = self.latest_image
 		img_stamp = self.image_stamp
 
+		transforms, distances = self.get_map_transforms([pointcloud_stamp], img_stamp)
+		pointcloud = transforms[0] @ pointcloud
+
 		self.pointcloud_array = []
 		self.pointcloud_stamp_array = []
 
@@ -153,19 +228,20 @@ class DistanceExtractor (object):
 
 		camera_pointcloud = self.lidar_to_camera @ pointcloud
 
-		# Calculate the distance to each lidar point
-		distances = np.linalg.norm(pointcloud, axis=0)
-
 		# Get the annotated image and detected traffic signs labels and coordinates
-		img, traffic_signs = self.traffic_sign_detector.get_traffic_signs(img)
-		img, traffic_lights = detect_traffic_lights(img)
-		traffic_signs.extend(traffic_lights)
+		traffic_signs = []
+		if not self.no_signs:
+			img, signs = self.traffic_sign_detector.get_traffic_signs(img)
+			traffic_signs.extend(signs)
+		if not self.no_lights:
+			img, traffic_lights = detect_traffic_lights(img)
+			traffic_signs.extend(traffic_lights)
 
 		# Visualize the lidar data projection onto the image
 		for i, point in enumerate(lidar_coordinates_in_image.T):
 				# Filter out points that are not in the image dimension or behind the camera
 				if 0 <= point[0] < img.shape[1] and 0 <= point[1] < img.shape[0] and camera_pointcloud[2, i] >=0:
-					cv.circle(img, (int(point[0]), int(point[1])), 1, (0, 255, 0), -1)
+					cv.drawMarker(img, (int(point[0]), int(point[1])), (0, 255, 0), cv.MARKER_CROSS, 4)
 
 		# If at least one traffic sign is detected
 		if len(traffic_signs) > 0:
@@ -207,20 +283,19 @@ class DistanceExtractor (object):
 			message.traffic_signs = sign_messages
 			self.traffic_sign_publisher.publish(message)
 		
-		img = cv.cvtColor(self.latest_image, cv.COLOR_RGB2BGR)
-		cv.imshow('viz', img)
-
+		#image_message = Image(height=img.shape[0], width=img.shape[1], data=tuple(img.flatten()))
+		#self.visualization_publisher.publish(image_message)
+		img = cv.cvtColor(img, cv.COLOR_RGB2BGR)
+		cv.imshow('Panneaux', img)
 		cv.waitKey(5)
 
 if __name__ == "__main__":
-
 	if len(sys.argv) < 2:
-		print(f"Usage : {sys.argv[0]} <parameter-file>")
+		print(f"Usage : {sys.argv[0]} <parameter-file> [--no-lights] [--no-signs]")
 	else:
 		with open(sys.argv[1], "r") as parameterfile:
 			parameters = yaml.load(parameterfile, yaml.Loader)
 		rospy.init_node("traffic_sign_distances")
-		node = DistanceExtractor(parameters)
+		node = DistanceExtractor(parameters, "--no-lights" in sys.argv, "--no-signs" in sys.argv)
 		rospy.spin()
-		cv.destroyAllWindows()
 

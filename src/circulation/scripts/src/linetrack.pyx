@@ -1,6 +1,20 @@
 # distutils: language=c++
 # cython: boundscheck=False, wraparound=False, initializedcheck=False
 
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 """
 Module that does curve extraction from binary images
 """
@@ -288,7 +302,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 	for j in range(filter_size):
 		gaussian_filter[j] /= gaussian_weight
 	
-	print("\n")
 	# Now loop on the curve, computing the pointwise curvature, filtering it, and splitting the curve when necessary
 	section_start = 0  # Start index of the section (first index to have a low enough curvature)
 	section_end = 0    # End index of the section (first index to have a curvature too high)
@@ -350,7 +363,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		smooth_curvature = 0
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
-		print(smooth_curvature)
 
 		curvature_index = (curvature_index + 1) % filter_size
 		if previous_curvature >= 0:
@@ -714,7 +726,8 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 	"""
 	
 	# Filter the extracted branches, and cut them where the angle gets too sharp, to avoid rough edges getting in the way of merging
-	cdef list cluster_lines = []
+	cdef Py_ssize_t i
+	cdef list cut_lines = []
 	for line in lines:
 		if line.shape[1] > savgol_degree + 1 and trajeometry.line_length(line) > min_branch_length:
 			# Smooth the branch, at this points it is contiguous pixel coordinates
@@ -722,9 +735,15 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 			if resampled_branch.shape[1] <= savgol_degree + 1:
 				continue
 			
-			filtered_branch = trajeometry.savgol_filter(resampled_branch, trajeometry.savgol_window(initial_filter_window, resampled_branch.shape[1]), savgol_degree)
+			cut_lines.extend(cut_line_angles(resampled_branch, curvature_filter_size, curvature_filter_deviation, savgol_degree, min_branch_length, max_curvature))
+	
+	cdef list cluster_lines = []
+	for i, line in enumerate(cut_lines):
+		if line.shape[1] > savgol_degree + 1:
+			filtered_branch = trajeometry.savgol_filter(line, trajeometry.savgol_window(initial_filter_window, line.shape[1]), savgol_degree)
 			if filtered_branch.shape[1] > savgol_degree + 1:
-				cluster_lines.extend(cut_line_angles(filtered_branch, curvature_filter_size, curvature_filter_deviation, savgol_degree, min_branch_length, max_curvature))
+				cluster_lines.append(filtered_branch)
+				
 
 	# Merge lines that are in the continuity of each other
 	# This checks all the combinations of line and merge them when possible
@@ -735,7 +754,6 @@ cpdef list filter_lines(list lines, int savgol_degree=2, int initial_filter_wind
 	cdef double[:, :] line1, line2
 	cdef cset[pair[Py_ssize_t, Py_ssize_t]] passed_combinations
 	cdef cset[pair[Py_ssize_t, Py_ssize_t]].iterator it
-	cdef Py_ssize_t i
 
 	cdef _MergeState merge_candidate, merge_result = _MergeState(merge=False, flip1=False, flip2=False, arc=False, center_x=NAN, center_y=NAN, radius=NAN, error=INFINITY, distance=NAN)
 	cdef Py_ssize_t index1, index2, merge_index = -1

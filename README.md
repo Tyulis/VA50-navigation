@@ -19,8 +19,9 @@ Cette dernière doit être relancée à chaque changement dans les modules Cytho
 
 ## Contenu du projet
 
-Le projet comprend 4 packages ROS :
+Le projet comprend 5 packages ROS :
 
+- `transformtrack` gère le déplacement du véhicule et les changements de repère
 - `circulation` gère la construction de trajectoire et les transformations
 - `control` s’occupe du contrôle du véhicule
 - `trafficsigns` détecte la signalisation verticale
@@ -30,7 +31,7 @@ Le projet comprend 4 packages ROS :
 
 Une fois tous les modules nécessaires compilés et installés, le projet contient 5 nœuds ROS :
 
-- Service de transformation (nécessaire pour tout le reste) : `rosrun circulation TransformBatch.py circulation4-2.yml`
+- Service de transformation (nécessaire pour tout le reste) : `rosrun transformtrack transformtrack_node`
 - Construction de trajectoire : `rosrun circulation circulation4.py circulation4-2.yml road_network.json`
 - Détection des panneaux : `rosrun trafficsigns distance_extractor.py circulation4-2.yml`
 - Contrôle du véhicule : `rosrun control control.py circulation4-2.yml`
@@ -43,3 +44,6 @@ Le projet utilise un même fichier de paramètres au format YAML :
 - `circulation4-2.yml` pour la version du 03/01/2023
 
 Les changements de visibilité entre les différentes versions impliquent la modification de quelques informations a priori (région d’intérêt, quelques paramètres de logique floue, …)
+
+Si le fichier de configuration est modifié, il est nécessaire de lancer `python3 genconfig <fichier de config> transformtrack` pour regénérer la config des nodes C++,
+puis de les recompiler avec `./build_circulation.sh build`

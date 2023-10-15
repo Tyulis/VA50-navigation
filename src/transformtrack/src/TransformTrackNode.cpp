@@ -1,3 +1,18 @@
+//   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+//
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
+//
+//       http://www.apache.org/licenses/LICENSE-2.0
+//
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+
+#include <armadillo>
 #include <algorithm>
 
 #include "std_msgs/Float32MultiArray.h"
@@ -27,6 +42,7 @@ void TransformTrackNode::run() {
 }
 
 void TransformTrackNode::callback_velocity(geometry_msgs::TwistStamped::ConstPtr const& message) {
+	arma::dmat map_transform = get_rotation(config::node::world_frame, config::node::road_frame);
 	arma::dvec linear_velocity = {message->twist.linear.x, message->twist.linear.y, message->twist.linear.z};
 	arma::dvec angular_velocity = {message->twist.angular.x, message->twist.angular.y, message->twist.angular.z};
 	m_transform_manager.add_velocity(message->header.stamp.toSec(), linear_velocity, angular_velocity);
@@ -34,22 +50,25 @@ void TransformTrackNode::callback_velocity(geometry_msgs::TwistStamped::ConstPtr
 
 bool TransformTrackNode::handle_transform_batch(transformtrack::TransformBatch::Request& request, transformtrack::TransformBatch::Response& response) {
 	// Retrieve the timestamps
-	arma::dvec start_timestamps(request.timestamps.start_times.size());
-	std::transform(request.timestamps.start_times.begin(), request.timestamps.start_times.end(), start_timestamps.begin(), [](ros::Time timestamp) {return timestamp.toSec();});
-	double end_timestamp = request.timestamps.end_time.toSec();
+	arma::dvec start_timestamps(request.start_times.size());
+	std::transform(request.start_times.begin(), request.start_times.end(), start_timestamps.begin(), [](ros::Time timestamp) {return timestamp.toSec();});
+	double end_timestamp = request.end_time.toSec();
 	
 	// Compute the transforms
-	arma::fcube transforms = m_transform_manager.get_map_transforms(start_timestamps, end_timestamp);
+	auto [transforms, distances] = m_transform_manager.get_map_transforms(start_timestamps, end_timestamp);
 
 	// Those transforms are from start_time to end_time, expressed in the map frame as the velocity refers to the map frame
 	// So we need to rotate those back to the end_time frame
-	arma::fmat map_transform = get_rotation(config::node::world_frame, config::node::road_frame);
-	transforms.each_slice([&](arma::fmat& transform) {
+	arma::dmat map_transform = get_rotation(config::node::world_frame, config::node::road_frame);
+	transforms.each_slice([&](arma::dmat& transform) {
 		transform.submat(0, 3, 2, 3) = map_transform * transform.submat(0, 3, 2, 3);
 		transform.submat(0, 0, 2, 2) = map_transform * transform.submat(0, 0, 2, 2) * map_transform.t();
+		// transform.submat(0, 0, 1, 1) = transform.submat(0, 0, 1, 1).t();
+		// transform.submat(0, 3, 1, 3) = -transform.submat(0, 3, 1, 3);
 	}, true);
 
 	// And build the response
+	response.distances.insert(response.distances.end(), distances.begin(), distances.end());
 	response.transforms.data.insert(response.transforms.data.end(), transforms.begin(), transforms.end());
 	
 	response.transforms.layout.dim.emplace_back();
@@ -83,8 +102,8 @@ bool TransformTrackNode::handle_drop_velocity(transformtrack::DropVelocity::Requ
   * - target_frame : std::string      : Name of the target frame
   * <------------- : arma::fmat[3, 3] : 3D rotation matrix to convert from `source_frame` to `target_frame`,
 	                                    or None if no TF for those frames was published */
-arma::fmat TransformTrackNode::get_rotation(std::string const& source_frame, std::string const& target_frame) {
-	arma::fmat transform(3, 3, arma::fill::eye);
+arma::dmat TransformTrackNode::get_rotation(std::string const& source_frame, std::string const& target_frame) {
+	arma::dmat transform(3, 3, arma::fill::eye);
 	geometry_msgs::TransformStamped message;
 	try {
 		message = m_tf_buffer.lookupTransform(target_frame, source_frame, ros::Time(0));
@@ -97,17 +116,17 @@ arma::fmat TransformTrackNode::get_rotation(std::string const& source_frame, std
 	
 	// Formula for the rotation matrix from a quaternion from here :
 	// https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation#Quaternion-derived_rotation_matrix
-	float s = static_cast<float>(1.0 / (rotation.w*rotation.w + rotation.x*rotation.x + rotation.y*rotation.y + rotation.z*rotation.z));
+	double s = 1.0 / (rotation.w*rotation.w + rotation.x*rotation.x + rotation.y*rotation.y + rotation.z*rotation.z);
 	
 	// Rotation matrix from the resulting quaternion
-	transform(0, 0) = static_cast<float>(1 - 2*s * (rotation.y * rotation.y + rotation.z * rotation.z));
-	transform(1, 0) = static_cast<float>(    2*s * (rotation.x * rotation.y + rotation.z * rotation.w));
-	transform(2, 0) = static_cast<float>(    2*s * (rotation.x * rotation.z - rotation.y * rotation.w));
-	transform(0, 1) = static_cast<float>(    2*s * (rotation.x * rotation.y - rotation.z * rotation.w));
-	transform(1, 1) = static_cast<float>(1 - 2*s * (rotation.x * rotation.x + rotation.z * rotation.z));
-	transform(2, 1) = static_cast<float>(    2*s * (rotation.y * rotation.z + rotation.x * rotation.w));
-	transform(0, 2) = static_cast<float>(    2*s * (rotation.x * rotation.z + rotation.y * rotation.w));
-	transform(1, 2) = static_cast<float>(    2*s * (rotation.y * rotation.z - rotation.x * rotation.w));
-	transform(2, 2) = static_cast<float>(1 - 2*s * (rotation.x * rotation.x + rotation.y * rotation.y));
+	transform(0, 0) = 1 - 2*s * (rotation.y * rotation.y + rotation.z * rotation.z);
+	transform(1, 0) =     2*s * (rotation.x * rotation.y + rotation.z * rotation.w);
+	transform(2, 0) =     2*s * (rotation.x * rotation.z - rotation.y * rotation.w);
+	transform(0, 1) =     2*s * (rotation.x * rotation.y - rotation.z * rotation.w);
+	transform(1, 1) = 1 - 2*s * (rotation.x * rotation.x + rotation.z * rotation.z);
+	transform(2, 1) =     2*s * (rotation.y * rotation.z + rotation.x * rotation.w);
+	transform(0, 2) =     2*s * (rotation.x * rotation.z + rotation.y * rotation.w);
+	transform(1, 2) =     2*s * (rotation.y * rotation.z - rotation.x * rotation.w);
+	transform(2, 2) = 1 - 2*s * (rotation.x * rotation.x + rotation.y * rotation.y);
 	return transform;
 }

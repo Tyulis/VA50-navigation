@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 """
 Main module of the ROS node that builds the vehicle’s trajectory
 
@@ -16,6 +31,7 @@ TROUBLESHOOTING :
 import sys
 import time
 import enum
+import itertools
 import cProfile
 from threading import Lock
 from collections import Counter
@@ -25,6 +41,7 @@ import yaml
 import cv2 as cv
 import numpy as np
 import transforms3d.quaternions as quaternions
+import transforms3d.euler
 from sklearn.neighbors import KernelDensity
 from sklearn.cluster import DBSCAN
 
@@ -34,7 +51,6 @@ import tf2_ros
 from std_msgs.msg import UInt8, Float64MultiArray, MultiArrayDimension, Header
 from sensor_msgs.msg import Image, CameraInfo
 from transformtrack.srv import TransformBatch, TransformBatchRequest, DropVelocity, DropVelocityRequest
-from transformtrack.msg import TimeBatch
 from circulation.msg import Trajectory
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
@@ -63,30 +79,88 @@ INTERSECTION_SIGNS = (
     'keep-left',
 )
 
+TURN_SIGNS = (
+	'right-only', 
+    'left-only', 
+    'ahead-only', 
+    'straight-right-only', 
+    'straight-left-only', 
+    'keep-right', 
+    'keep-left',
+)
+
 
 class NavigationMode (enum.Enum):
 	CRUISE = 0
-	FORWARD_SKIP = 110
-	LEFT_TURN = 111
-	RIGHT_TURN = 112
+	INTERSECTION_FORWARD = 110
+	INTERSECTION_LEFT = 111
+	INTERSECTION_RIGHT = 112
+	TURN_LEFT = 113
+	TURN_RIGHT = 114
 	PANIC_CORE_BREACH = 500
 	PANIC_UNSUPPORTED = 501
 	PANIC_EXCEPTION = 502
 	PANIC_NO_DIRECTION = 510
+
+	def is_intersection(self):
+		return self == NavigationMode.INTERSECTION_LEFT or self == NavigationMode.INTERSECTION_RIGHT or self == NavigationMode.INTERSECTION_FORWARD
 
 class Direction:
 	DEAD_END = 0b0000
 	FORWARD = 0b0001
 	LEFT = 0b0010
 	RIGHT = 0b0100
+	DOUBLE_LANE = 0b1000
+	FORCE_INTERSECTION = 0b10000
+
+# class TrajectoryVisualizer (object):
+# 	"""Quick-and-dirty visualization window management
+# 	   There are 2 visualizations, just merge them into one and call cv.imshow"""
+	
+# 	def __init__(self, parameters):
+# 		self.parameters = parameters
+# 		self.lines_publisher = rospy.Publisher(self.parameters["node"]["lines-viz-topic"], Image, queue_size=10)
+# 		self.trajectory_publisher = rospy.Publisher(self.parameters["node"]["trajectory-viz-topic"], Image, queue_size=10)
+
+# 	def update_line_detection(self, be_binary, lines, left_line_index, right_line_index, markings):
+# 		"""Generate and update the left visualization from the preprocessed image and the detected lines and markings
+# 		   - be_binary        : ndarray[y, x]       : Preprocessed camera image (binary edge-detected bird-eye view)
+# 		   - lines            : list<ndarray[2, N]> : Detected discrete curves in the image
+# 		   - left_line_index  : int                 : Index of the left lane marking in the `lines` list, or None
+# 		   - right_line_index : int                 : Index of the right lane marking in the `lines` list, or None
+# 		   - markings         : dict<str, …>        : Dictionary of detected road markings. Currently only supports `crosswalks`
+# 		"""
+# 		line_viz = cv.merge((be_binary, be_binary, be_binary))
+# 		for line in lines:
+# 			cv.polylines(line_viz, [line.astype(int).transpose()], False, (0, 200, 0), 2)
+# 		if left_line_index is not None:
+# 			cv.polylines(line_viz, [lines[left_line_index].astype(int).transpose()], False, (255, 0, 0), 4)
+# 		if right_line_index is not None:
+# 			cv.polylines(line_viz, [lines[right_line_index].astype(int).transpose()], False, (0, 100, 255), 4)
+
+# 		for i, crosswalk in enumerate(markings["crosswalks"]):
+# 			color = ((int(i * 255 / len(markings["crosswalks"])) + 30) % 255, 255, 255)
+# 			for rectangle in crosswalk:
+# 				cv.fillPoly(line_viz, [rectangle.astype(int).transpose()], color)
+
+# 		message = Image(height=line_viz.shape[0], width=line_viz.shape[1], data=tuple(line_viz.flatten()), encoding="rgb8", step=line_viz.shape[1]*line_viz.shape[2])
+# 		self.lines_publisher.publish(message)
+
+# 	def update_trajectory_construction(self, viz):
+# 		"""Update the right visualization with the given image"""
+# 		message = Image(height=viz.shape[0], width=viz.shape[1], data=tuple(viz.flatten()), encoding="rgb8", step=viz.shape[1]*viz.shape[2])
+# 		self.trajectory_publisher.publish(message)
+	
 
 class TrajectoryVisualizer (object):
 	"""Quick-and-dirty visualization window management
 	   There are 2 visualizations, just merge them into one and call cv.imshow"""
 	
-	def __init__(self):
+	def __init__(self, parameters):
 		self.line_viz = None
 		self.trajectory_viz = None
+		self.message = None
+		self.message_time = None
 
 	def update_line_detection(self, be_binary, lines, left_line_index, right_line_index, markings):
 		"""Generate and update the left visualization from the preprocessed image and the detected lines and markings
@@ -115,20 +189,30 @@ class TrajectoryVisualizer (object):
 		"""Update the right visualization with the given image"""
 		self.trajectory_viz = viz
 		self.update()
+	
+	def print_message(self, message):
+		self.message = message
+		self.message_time = time.time()
 
 	def update(self):
 		"""Update the visualization window"""
 		if self.line_viz is None or self.trajectory_viz is None:
 			return
 		# Just merge both images
-		full_viz = cv.cvtColor(np.concatenate((self.line_viz, 255*np.ones((self.line_viz.shape[0], 30, 3), dtype=np.uint8), self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
+		# full_viz = cv.cvtColor(np.concatenate((self.line_viz, np.zeros((self.line_viz.shape[0], 30, 3), dtype=np.uint8), self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
+		full_viz = cv.cvtColor(np.concatenate((self.line_viz, self.trajectory_viz), axis=1), cv.COLOR_RGB2BGR)
+		if self.message is not None:
+			if time.time() > self.message_time + 5:
+				self.message = None
+				self.message_time = None
+			else:
+				cv.putText(full_viz, self.message, (5, 40), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 		
 		# Uncomment these if your visualization window often stays tiny
 		## cv.namedWindow("viz", cv.WINDOW_NORMAL)
 		## cv.resizeWindow("viz", full_viz.shape[1], full_viz.shape[0])
-		cv.imshow("viz", full_viz)
+		cv.imshow("Trajectoire", full_viz)
 		cv.waitKey(1)
-
 
 class IntersectionHint (object):
 	"""Hold the position and informations about anything that may indicate an intersection"""
@@ -146,7 +230,7 @@ class IntersectionHint (object):
 		self.confidences.extend(hint.confidences)
 	
 	def confidence(self):
-		return 1 - np.sqrt(np.sum((1 - self.confidences)**2)) / len(self.confidences)
+		return 1 - np.sqrt(np.sum((1 - np.asarray(self.confidences))**2)) / len(self.confidences)
 
 	def direction_hint(self):
 		if self.category != "trafficsign":
@@ -167,6 +251,11 @@ class IntersectionHint (object):
 
 	def __hash__(self):
 		return id(self)
+
+	def __str__(self):
+		return f"{self.category} > {self.type} : {self.positions}, {self.confidences}"
+	def __repr__(self):
+		return f"{self.category} > {self.type} : {self.positions}, {self.confidences}"
 		
 
 
@@ -199,7 +288,7 @@ class TrajectoryExtractorNode (object):
 
 		# Initialize the visualization
 		if self.parameters["node"]["visualize"]:
-			self.visualisation = TrajectoryVisualizer()
+			self.visualisation = TrajectoryVisualizer(self.parameters)
 		else:
 			self.visualisation = None
 
@@ -213,6 +302,7 @@ class TrajectoryExtractorNode (object):
 
 		# Intersection management
 		self.next_direction = Direction.FORWARD
+		self.next_double_lane = False
 		self.intersection_hints = []
 		self.last_lane_rejoin = None
 
@@ -282,10 +372,26 @@ class TrajectoryExtractorNode (object):
 		"""
 		if message.data == Direction.FORWARD:
 			rospy.loginfo("Updated next direction to FORWARD")
+			self.visualisation.print_message("Manually set next direction : FORWARD")
 		elif message.data == Direction.LEFT:
 			rospy.loginfo("Updated next direction to LEFT")
+			self.visualisation.print_message("Manually set next direction : LEFT")
 		elif message.data == Direction.RIGHT:
 			rospy.loginfo("Updated next direction to RIGHT")
+			self.visualisation.print_message("Manually set next direction : RIGHT")
+		elif message.data == Direction.DOUBLE_LANE:
+			rospy.loginfo("Next intersection has a double lane")
+			self.next_double_lane = True
+			return
+		elif message.data == Direction.FORCE_INTERSECTION:
+			self.visualisation.print_message("Manually force intersection mode")
+			if self.next_direction == Direction.LEFT:
+				self.switch_intersection(NavigationMode.INTERSECTION_LEFT, rospy.get_rostime(), 0)
+			elif self.next_direction == Direction.RIGHT:
+				self.switch_intersection(NavigationMode.INTERSECTION_RIGHT, rospy.get_rostime(), 0)
+			elif self.next_direction == Direction.FORWARD:
+				self.switch_intersection(NavigationMode.INTERSECTION_FORWARD, rospy.get_rostime(), 0)
+			return
 		else:
 			rospy.logerr(f"Invalid direction ID received : {message.data}")
 			return
@@ -296,7 +402,8 @@ class TrajectoryExtractorNode (object):
 		   - message : trafficsigns.msg.TrafficSignStatus : Message with the detected traffic signs data
 		"""
 		for trafficsign in message.traffic_signs:
-			if trafficsign.type in INTERSECTION_SIGNS and trafficsign.confidence > 0.6:
+			if trafficsign.type in TURN_SIGNS and trafficsign.confidence > 0.6:
+				rospy.loginfo(f"New traffic sign : {trafficsign.type}, position at {message.header.stamp} [{trafficsign.x}, {trafficsign.y}, {trafficsign.z}], confidence {trafficsign.confidence}")
 				self.add_intersection_hint(IntersectionHint("trafficsign", trafficsign.type, (trafficsign.x, trafficsign.y, trafficsign.z), message.header.stamp, trafficsign.confidence))
 
 	#               ╔═══════════════════════════════════════╗               #
@@ -340,8 +447,8 @@ class TrajectoryExtractorNode (object):
 		"""
 		# Build the request to the transform service, see srv/TransformBatch.srv and msg/TimeBatch.msg for info
 		request = TransformBatchRequest()
-		request.timestamps = TimeBatch(start_times=start_times, end_time=end_time)
-		request.unbias = True
+		request.start_times = start_times
+		request.end_time = end_time
 
 		# Now send the request and get the response
 		# We use persistent connections to improve efficiency, and ROS advises to implement some reconnection logic
@@ -370,9 +477,8 @@ class TrajectoryExtractorNode (object):
 		# The call was successful, get the transforms in the right format and return
 		# The transpose is because the individual matrices are transmitted in column-major order
 		transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
-		start_times_unbiased = start_times  # response.timestamps.start_times
-		end_time_unbiased = end_time  # response.timestamps.end_time
-		return transforms, start_times_unbiased, end_time_unbiased
+		distances = np.asarray(response.distances)
+		return transforms, distances
 	
 	def drop_velocity(self, end_time):
 		"""Call the DropVelocity service, such that the TransformBatch service discards its old velocity data
@@ -407,7 +513,7 @@ class TrajectoryExtractorNode (object):
 		elif hint.type != existing_hint.type:
 			return False
 		
-		transforms, _, _ = self.get_map_transforms(existing_hint.position_timestamps, hint.position_timestamps[-1])
+		transforms, distances = self.get_map_transforms(existing_hint.position_timestamps, hint.position_timestamps[-1])
 		existing_positions = np.asarray([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, existing_hint.positions)])[:2]
 		existing_centroid = np.mean(existing_positions, axis=1)
 		hint_position = np.asarray(hint.positions[-1])
@@ -415,10 +521,13 @@ class TrajectoryExtractorNode (object):
 
 	def add_intersection_hint(self, hint):
 		# Skip hints found too close to the last intersection
+		if self.navigation_mode != NavigationMode.CRUISE:
+			return
+		
 		if self.last_lane_rejoin is not None:
-			transforms, _, _ = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
-			distance = np.linalg.norm(transforms[0][:3, 3])
-			if distance < self.parameters["intersection"]["hint-detection-buffer"]:
+			transforms, distances = self.get_map_transforms([self.last_lane_rejoin], hint.position_timestamps[-1])
+			rospy.loginfo(f"Distance since rejoin : {distances[0]}")
+			if distances[0] < self.parameters["intersection"]["hint-detection-buffer"]:
 				return
 			else:
 				self.last_lane_rejoin = None
@@ -437,9 +546,15 @@ class TrajectoryExtractorNode (object):
 		   - image_timestamp : rospy.Time : Timestamp to measure the distance at
 		<--------------------- float      : Signed distance until the rejoin distance
 		                                    (negative if the vehicle is already farther than `self.rejoin_distance`)"""
-		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
-		distance = np.linalg.norm(transform[:3, 3])  # Compute the distance from the translation vector in the transform matrix
-		return self.rejoin_distance - distance
+		transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)
+		if self.rejoin_distance is not None:
+			return self.rejoin_distance - distances[0]
+		else:
+			angle = transforms3d.euler.mat2euler(transforms[0][:3, :3])[2]
+			if abs(angle) > 0.8 * (np.pi / 2):
+				return -1
+			else:
+				return 1
 	
 	def next_intersection(self, image_timestamp):
 		if len(self.intersection_hints) == 0:
@@ -456,30 +571,44 @@ class TrajectoryExtractorNode (object):
 		if len(hint_positions) == 0:
 			return None, None
 		
-		transforms, _, _ = self.get_map_transforms(hint_timestamps, image_timestamp)
+		transforms, distances = self.get_map_transforms(hint_timestamps, image_timestamp)
 
 		# Project everything onto the current directional vector (0, 1, 0) in local coordinates
 		current_distances = np.hstack([transform @ np.concatenate((position, [1])).reshape(-1, 1) for transform, position in zip(transforms, hint_positions)])[1]
 		
 		# Disregard points that are behind the vehicle
-		forward_filter = np.nonzero(current_distances >= 0)[0]
+		forward_filter = np.nonzero(current_distances >= -4)[0]
 		current_distances = current_distances[forward_filter]
 		hint_indices = [index for i, index in enumerate(hint_indices) if i in forward_filter]
 		
+		if len(current_distances) == 0:
+			return None, None
 		if len(current_distances) <= 2:
 			selected_index = np.argmin(current_distances)
 			hint = self.intersection_hints[hint_indices[selected_index]]
+			if hint.confidence() < self.parameters["intersection"]["min-confidence"]:
+				return None, None
 			return current_distances[selected_index], hint.direction_hint()
 		
 		labels = DBSCAN(eps=2, min_samples=2).fit_predict(current_distances.reshape(-1, 1))
 		if np.max(labels) < 0:
 			selected_index = np.argmin(current_distances)
 			hint = self.intersection_hints[hint_indices[selected_index]]
+			if hint.confidence() < self.parameters["intersection"]["min-confidence"]:
+				return None, None
 			return current_distances[selected_index], hint.direction_hint()
 		
 		cluster_distances = [np.mean(current_distances[labels == label]) for label in np.sort(np.unique(labels)) if label >= 0]
 		selected_cluster = np.argmin(cluster_distances)
 		hints = {self.intersection_hints[hint_indices[index]] for index in np.nonzero(labels == selected_cluster)[0]}
+		if all([hint.category == "trafficsign" for hint in hints]):
+			return None, None
+
+		confidences = np.asarray(list(itertools.chain([hint.confidences for hint in hints])))
+		confidence = 1 - np.sqrt(np.sum((1 - confidences)**2)) / confidences.size
+		if confidence < self.parameters["intersection"]["min-confidence"]:
+			return None, None
+			
 		direction_hint = Direction.FORWARD | Direction.LEFT | Direction.RIGHT
 		for hint in hints:
 			direction_hint &= hint.direction_hint()
@@ -502,20 +631,26 @@ class TrajectoryExtractorNode (object):
 		if intersection_distance is not None and intersection_distance < self.parameters["intersection"]["mode-switch-distance"]:
 			try:
 				# The intersection does not allow the chosen direction : go forth, keep for next time
-				if not self.next_direction & intersection_directions:
-					if intersection_directions & Direction.FORWARD:
-						self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp, intersection_distance)
+				if not (self.next_direction & intersection_directions):
+					possible_directions = bin(intersection_directions).count("1")
+					if possible_directions == 0:
+						return self.switch_panic(NavigationMode.PANIC_CORE_BREACH)
+					elif possible_directions == 1:
+						self.next_direction = intersection_directions
+					elif intersection_directions & Direction.FORWARD:
+						rospy.logwarn("Multiple possible directions, none correspond to the selected direction : go FORWARD")
+						return self.switch_intersection(NavigationMode.INTERSECTION_FORWARD, image_timestamp, intersection_distance)
 					else:
 						# Only left or right, no direction chosen -> wait for input
-						self.switch_panic(NavigationMode.PANIC_NO_DIRECTION)
+						return self.switch_panic(NavigationMode.PANIC_NO_DIRECTION)
 				
 				# Switch to the relevant intersection mode
-				elif self.next_direction == Direction.LEFT:
-					self.switch_intersection(NavigationMode.LEFT_TURN, image_timestamp, intersection_distance)
+				if self.next_direction == Direction.LEFT:
+					self.switch_intersection(NavigationMode.INTERSECTION_LEFT, image_timestamp, intersection_distance)
 				elif self.next_direction == Direction.RIGHT:
-					self.switch_intersection(NavigationMode.RIGHT_TURN, image_timestamp, intersection_distance)
+					self.switch_intersection(NavigationMode.INTERSECTION_RIGHT, image_timestamp, intersection_distance)
 				elif self.next_direction == Direction.FORWARD:
-					self.switch_intersection(NavigationMode.FORWARD_SKIP, image_timestamp, intersection_distance)
+					self.switch_intersection(NavigationMode.INTERSECTION_FORWARD, image_timestamp, intersection_distance)
 			except Exception as exc:
 				self.switch_panic(NavigationMode.PANIC_EXCEPTION, exc)
 	
@@ -524,23 +659,25 @@ class TrajectoryExtractorNode (object):
 		self.navigation_mode = NavigationMode.CRUISE
 		self.next_direction = Direction.FORWARD  # Go forward by default
 		self.last_lane_rejoin = image_timestamp
+		self.next_double_lane = False
+		self.current_trajectory = None
 		rospy.loginfo(f"Switching navigation mode : {self.navigation_mode}")
 	
 	def switch_intersection(self, navigation_mode, image_timestamp, intersection_distance):
 		"""Switch to an intersection navigation mode, and compute the necessary trajectories
 		   - navigation_mode : NavigationMode : New navigation mode to apply
 		"""
-		assert navigation_mode in (NavigationMode.FORWARD_SKIP, NavigationMode.LEFT_TURN, NavigationMode.RIGHT_TURN)
+		assert navigation_mode.is_intersection()
 
 		# Switch mode and do all necessary operations according to the direction
 		rospy.loginfo(f"Switching navigation mode : {navigation_mode}")
 		self.navigation_mode = navigation_mode
-		if self.navigation_mode == NavigationMode.FORWARD_SKIP:
-			self.build_forward_skip_trajectory(image_timestamp, intersection_distance)
-		elif self.navigation_mode == NavigationMode.RIGHT_TURN:
-			self.build_right_turn_trajectory(image_timestamp, intersection_distance)
-		elif self.navigation_mode == NavigationMode.LEFT_TURN:
-			self.build_left_turn_trajectory(image_timestamp, intersection_distance)
+		if self.navigation_mode == NavigationMode.INTERSECTION_FORWARD:
+			self.build_intersection_forward_trajectory(image_timestamp, intersection_distance)
+		elif self.navigation_mode == NavigationMode.INTERSECTION_RIGHT:
+			self.build_intersection_right_trajectory(image_timestamp, intersection_distance)
+		elif self.navigation_mode == NavigationMode.INTERSECTION_LEFT:
+			self.build_intersection_left_trajectory(image_timestamp, intersection_distance)
 		
 		# Clear the intersection hints for next time
 		self.intersection_hints.clear()
@@ -648,6 +785,17 @@ class TrajectoryExtractorNode (object):
 		angle_density = density_model.score_samples(angles.reshape(-1, 1))
 		return angles[np.argmax(angle_density)]
 
+	def check_stop_line(self, transverse_lines, image_timestamp):
+		lengths = [trajeometry.line_length(line) for line in transverse_lines]
+		for i in range(0, len(lengths) - 1):
+			for j in range(i + 1, len(lengths)):
+				ratio = lengths[i] / lengths[j] if lengths[j] > lengths[i] else lengths[j] / lengths[i]
+				mean = (lengths[i] + lengths[j]) / 2
+				if 0.77 < ratio < 1.3 and 0.75 * self.parameters["environment"]["lane-width"] < mean < 1.5 * self.parameters["environment"]["lane-width"]:
+					position = np.asarray([*np.mean(np.hstack([transverse_lines[i], transverse_lines[j]]), axis=1), 0])
+					self.add_intersection_hint(IntersectionHint("marking", "stopline", position, image_timestamp, ratio))
+
+
 	def detect_lane(self, be_binary, scale_factor, image_timestamp):
 		"""Find the best candidate for the current lane
 		   - be_binary       : ndarray[y, x] : Preprocessed bird-eye view
@@ -677,15 +825,24 @@ class TrajectoryExtractorNode (object):
 				target_bands = [self.birdeye_to_target(be_binary, band) for band in crosswalk]
 				band_centroids = np.asarray([np.mean(band, axis=1) for band in target_bands])
 				crosswalk_centroid = np.concatenate((np.mean(band_centroids, axis=0), [0]))
-				self.add_intersection_hint(IntersectionHint("marking", "crosswalk", crosswalk_centroid, image_timestamp, 1))
+				confidence = min(1, len(target_bands) / 6)
+				self.add_intersection_hint(IntersectionHint("marking", "crosswalk", crosswalk_centroid, image_timestamp, confidence))
 
-		lines = linetrack.filter_lines(branches, **parameters)
+		filtered_lines = linetrack.filter_lines(branches, **parameters)
 
 		# Flip the lines so that they start at the bottom of the image,
-		for i, line in enumerate(lines):
-			if line[1, 0] < line[1, -1]:
-				line = np.flip(line, axis=1)
-				lines[i] = line
+		lines = []
+		transverse_lines = []
+		for i, line in enumerate(filtered_lines):
+			angles = np.arctan2(np.gradient(line[1]), np.gradient(line[0]))
+			if np.all(((-np.pi/10 < angles) & (angles < np.pi/10)) | ((9*np.pi/10 < angles) & (angles < 11*np.pi/10))):
+				transverse_lines.append(line)
+			elif line[1, 0] < line[1, -1]:
+				lines.append(np.flip(line, axis=1))
+			else:
+				lines.append(line)
+		
+		#self.check_stop_line([self.birdeye_to_target(be_binary, line) for line in transverse_lines], image_timestamp)
 		
 		# Convert all curves from pixel coordinates to metric coordinates in the local road frame 
 		target_lines = [self.birdeye_to_target(be_binary, line) for line in lines]
@@ -707,7 +864,7 @@ class TrajectoryExtractorNode (object):
 		# Intersection modes, AFTER the rejoin distance has been reached :
 		# The vehicle must now catch the next lane to follow, so to maximize the chances of getting it right,
 		# force it to use only FULL lanes (left and right), or fail and wait for the next image 
-		elif self.navigation_mode in (NavigationMode.FORWARD_SKIP, NavigationMode.LEFT_TURN, NavigationMode.RIGHT_TURN):
+		elif self.navigation_mode.is_intersection():
 			left_line_index, right_line_index, left_line_score, right_line_score = self.detect_full_lane(forward_distance, left_line_distance, right_line_distance, line_lengths, parallel_distance, parallel_angles, fallback=False)
 		
 		left_line = target_lines[left_line_index] if left_line_index is not None else None
@@ -860,7 +1017,7 @@ class TrajectoryExtractorNode (object):
 		<------------------- list<ndarray[M]>       : Scores for each point of each local curve
 		<------------------- rospy.Time             : Unbiased target timestamp. This is an artifact of the time when the simulator gave incoherent timestamps,
 		                                              on the latest version it is same as target_timestamp"""
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(timestamps), target_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(timestamps), target_timestamp)
 		extended_lines = []
 		point_scores = []
 		for line, line_scores, transform in zip(lines, scores, transforms):
@@ -885,7 +1042,7 @@ class TrajectoryExtractorNode (object):
 					extended_line = cut_line
 				extended_lines.append(extended_line)
 				point_scores.append(line_scores)
-		return extended_lines, point_scores, target_unbiased
+		return extended_lines, point_scores
 
 	def compile_trajectory(self, timestamp, left_line, left_score, right_line, right_score, viz=None):
 		"""Estimate a trajectory from the lane markings extracted from a single frame, and add it to the trajectory history buffer
@@ -947,6 +1104,18 @@ class TrajectoryExtractorNode (object):
 		if trajectory is not None and trajectory.shape[1] > 3:
 			filtered_trajectory = trajeometry.savgol_filter(trajectory, trajeometry.savgol_window(7, trajectory.shape[1]), 2)
 
+			if self.current_trajectory is not None and not self.navigation_mode.is_intersection():
+				transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], timestamp)
+				local_current_trajectory = (transforms[0] @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
+				local_current_trajectory = local_current_trajectory[:, local_current_trajectory[1] > self.parameters["birdeye"]["roi-y"]]
+				if local_current_trajectory.shape[1] > 4:
+					parallel_distance = trajeometry.mean_parallel_distance(filtered_trajectory, local_current_trajectory)
+					if parallel_distance > self.parameters["trajectory"]["max-parallel-distance"]:
+						if viz is not None:
+							viz_points = self.target_to_birdeye(viz, filtered_trajectory).transpose().astype(int)
+							cv.polylines(viz, [viz_points], False, (0, 255, 255), 2)  # Red
+						return
+
 			self.trajectory_buffer.append(filtered_trajectory)
 			self.trajectory_scores.append(trajectory_scores)
 			self.trajectory_timestamps.append(timestamp)
@@ -958,7 +1127,8 @@ class TrajectoryExtractorNode (object):
 				self.trajectory_timestamps.pop(0)
 			
 			# Make the transform service discard velocity data older than what will be useful from this point on
-			self.drop_velocity(self.trajectory_timestamps[0])
+			oldest_timestamp = min(itertools.chain(self.trajectory_timestamps, itertools.chain(*[hint.position_timestamps for hint in self.intersection_hints])))
+			self.drop_velocity(oldest_timestamp)
 
 			if viz is not None:
 				viz_points = self.target_to_birdeye(viz, filtered_trajectory).transpose().astype(int)
@@ -966,19 +1136,25 @@ class TrajectoryExtractorNode (object):
 	
 	# ════════════════ INTERSECTION TRAJECTORY ESTIMATION ═════════════════ #
 
-	def build_forward_skip_trajectory(self, image_timestamp, intersection_distance):
+	def build_intersection_forward_trajectory(self, image_timestamp, intersection_distance):
 		"""Precompute the trajectory to follow to go forward through an intersection
 		   - image_timestamp : rospy.Time : Timestamp at which to estimate the trajectory
 		   - intersection_distance : float : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection)
 		"""
 		self.rejoin_distance = self.parameters["intersection"]["default-rejoin-distance"]
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		local_lines = [(transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2] for transform, trajectory in zip(transforms, self.trajectory_buffer)]
+		cut_lines = [local_line[:, local_line[1] < intersection_distance] for local_line in local_lines]
+		main_angle = self.estimate_main_angle(cut_lines)
 
-		# Just output a straight trajectory for as long as necessary		
+		# Just output a straight trajectory for as long as necessary based on that main angle		
 		max_length = int(100 / self.parameters["trajectory"]["trajectory-step"])
-		self.current_trajectory = np.asarray((np.zeros(max_length), np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"]))
+		self.current_trajectory = np.asarray((np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"] * np.cos(main_angle),
+											  np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"] * np.sin(main_angle)))
+		# self.current_trajectory = np.asarray((np.zeros(max_length), np.arange(0, max_length, 1) * self.parameters["trajectory"]["trajectory-step"]))
 		self.current_trajectory_timestamp = image_timestamp
 	
-	def build_right_turn_trajectory(self, image_timestamp, intersection_distance):
+	def build_intersection_right_trajectory(self, image_timestamp, intersection_distance):
 		"""Precompute the trajectory to follow to turn right at an intersection
 		   - image_timestamp : rospy.Time : Timestamp at which to estimate the trajectory
 		   - intersection_distance : float : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection)
@@ -988,7 +1164,7 @@ class TrajectoryExtractorNode (object):
 		# Get the previously estimated trajectories, transform them into the local frame,
 		# and keep only the parts that are within the intersection
 		# Then get their mean curvature, that is used afterwards to estimate the turn curvature
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
 		curvatures = []
 		for i, (transform, trajectory) in enumerate(zip(transforms, self.trajectory_buffer)):
 			local_line = (transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2]
@@ -1009,19 +1185,21 @@ class TrajectoryExtractorNode (object):
 		# If it’s obviously wrong, clip it to default values
 		# This won’t do much good, but well, let’s see where it goes and if it’s really awful we’ll make it panic
 		if trajectory_radius < self.parameters["intersection"]["min-turn-radius"]:
-			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
-			trajectory_radius = self.parameters["intersection"]["min-turn-radius"]
+			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), setting to default ({self.parameters['intersection']['default-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["default-turn-radius"]
 		if trajectory_radius > self.parameters["intersection"]["max-turn-radius"]:
-			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
-			trajectory_radius = self.parameters["intersection"]["max-turn-radius"]
+			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), setting to default {self.parameters['intersection']['default-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["default-turn-radius"]
 
 		# And from that, compute the trajectory as a quarter circle to the right with that radius
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
 		angles = np.flip(np.arange(np.pi/2, np.pi, angle_step))
 		self.current_trajectory = np.asarray((trajectory_radius*(1 + np.cos(angles)), trajectory_radius*np.sin(angles) + intersection_distance))
 		self.current_trajectory_timestamp = image_timestamp
+		self.rejoin_distance = trajeometry.line_length(self.current_trajectory)
+		self.rejoin_distance = None
 	
-	def build_left_turn_trajectory(self, image_timestamp, intersection_distance):
+	def build_intersection_left_trajectory(self, image_timestamp, intersection_distance):
 		"""Precompute the trajectory to follow to turn right at an intersection
 		   - image_timestamp : rospy.Time : Timestamp at which to estimate the trajectory
 		   - intersection_distance : float : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection)
@@ -1031,7 +1209,7 @@ class TrajectoryExtractorNode (object):
 		# and of course goes to the left
 		self.rejoin_distance = self.parameters["intersection"]["default-rejoin-distance"]
 
-		transforms, start_unbiased, target_unbiased = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
+		transforms, distances = self.get_map_transforms(np.asarray(self.trajectory_timestamps), image_timestamp)
 		curvatures = []
 		for i, (transform, trajectory) in enumerate(zip(transforms, self.trajectory_buffer)):
 			local_line = (transform @ np.vstack((trajectory, np.zeros((1, trajectory.shape[1])), np.ones((1, trajectory.shape[1])))))[:2]
@@ -1048,16 +1226,23 @@ class TrajectoryExtractorNode (object):
 
 		trajectory_radius = 1 / marking_curvature
 		if trajectory_radius < self.parameters["intersection"]["min-turn-radius"]:
-			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['min-turn-radius']}")
-			trajectory_radius = self.parameters["intersection"]["min-turn-radius"]
+			rospy.logwarn(f"Absurdly small curve radius found ({trajectory_radius:.3f}m), setting to default {self.parameters['intersection']['default-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["default-turn-radius"]
 		if trajectory_radius > self.parameters["intersection"]["max-turn-radius"]:
-			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), clipping to {self.parameters['intersection']['max-turn-radius']}")
-			trajectory_radius = self.parameters["intersection"]["max-turn-radius"]
+			rospy.logwarn(f"Absurdly large curve radius found ({trajectory_radius:.3f}m), setting to default {self.parameters['intersection']['default-turn-radius']}")
+			trajectory_radius = self.parameters["intersection"]["default-turn-radius"]
 
 		angle_step = self.parameters["trajectory"]["trajectory-step"] / trajectory_radius
 		angles = np.arange(0, np.pi/2, angle_step)
-		self.current_trajectory = np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + self.parameters["environment"]["lane-width"] + intersection_distance))
+		init_distances = np.arange(0, (1.75 if self.next_double_lane else 1) * self.parameters["environment"]["lane-width"], self.parameters["trajectory"]["trajectory-step"])
+
+		self.current_trajectory = np.hstack([
+			np.asarray((np.zeros(init_distances.size), init_distances)),
+			np.asarray((trajectory_radius*(np.cos(angles) - 1), trajectory_radius*np.sin(angles) + (1.75 if self.next_double_lane else 1) * self.parameters["environment"]["lane-width"] + intersection_distance))
+		])
 		self.current_trajectory_timestamp = image_timestamp
+		self.rejoin_distance = trajeometry.line_length(self.current_trajectory)
+		self.rejoin_distance = None
 	
 	# ═══════════════════ FINAL TRAJECTORY CONSTRUCTION ═══════════════════ #
 
@@ -1066,7 +1251,7 @@ class TrajectoryExtractorNode (object):
 		   - target_timestamp : rospy.Time : Timestamp for which the final trajectory must be estimated
 		"""
 		# Transform the trajectory buffer to the local frame
-		local_trajectories, local_scores, target_unbiased = self.localize_trajectories(self.trajectory_buffer, self.trajectory_scores, self.trajectory_timestamps, target_timestamp)
+		local_trajectories, local_scores = self.localize_trajectories(self.trajectory_buffer, self.trajectory_scores, self.trajectory_timestamps, target_timestamp)
 
 		# Visualization of the per-frame trajectories
 		if viz is not None:
@@ -1082,7 +1267,7 @@ class TrajectoryExtractorNode (object):
 		if compiled_trajectory is not None and compiled_trajectory.size > 0 and compiled_trajectory.shape[1] > 3:
 			compiled_trajectory, compiled_scores = trajeometry.strip_angles(compiled_trajectory, np.pi/2, compiled_scores)
 			self.current_trajectory = trajeometry.savgol_filter(compiled_trajectory, trajeometry.savgol_window(7, compiled_trajectory.shape[1]), 2)
-			self.current_trajectory_timestamp = target_unbiased
+			self.current_trajectory_timestamp = target_timestamp
 
 			if viz is not None:
 				viz_points = self.target_to_birdeye(viz, self.current_trajectory).transpose().astype(int)
@@ -1103,12 +1288,12 @@ class TrajectoryExtractorNode (object):
 		   - image_timestamp    : rospy.Time    : Timestamp to visualize at
 		   - remaining_distance : float         : Distance until reaching the rejoin distance
 		"""
-		transform = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)[0][0]
-		local_trajectory = (transform @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
+		transforms, distances = self.get_map_transforms([self.current_trajectory_timestamp], image_timestamp)
+		local_trajectory = (transforms[0] @ np.vstack((self.current_trajectory, np.zeros((1, self.current_trajectory.shape[1])), np.ones((1, self.current_trajectory.shape[1])))))[:2]
 		viz_trajectory = self.target_to_birdeye(viz, local_trajectory)
 		cv.polylines(viz, [viz_trajectory.transpose().astype(int)], False, (60, 255, 255), 2)
 		if remaining_distance is not None:
-			cv.circle(viz, (viz.shape[1]//2, viz.shape[1]), int(remaining_distance / scale_factor), (0, 255, 255), 1)
+			cv.circle(viz, (viz.shape[1]//2, viz.shape[0]), int(remaining_distance / scale_factor), (0, 255, 255), 1)
 	
 	#                      ╔═════════════════════════╗                      #
 	# ═════════════════════╣ BIRD-EYE VIEW UTILITIES ╠═════════════════════ #
@@ -1132,6 +1317,12 @@ class TrajectoryExtractorNode (object):
 		"""
 		# Add the current position (0, 0) to the trajectory, otherwise the first point might be too far away
 		# and the pure pursuit will miss it
+		while trajectory_points.shape[0] > 0 and abs(np.pi / 2 - np.arctan2(trajectory_points[0, 1], trajectory_points[0, 0])) > self.parameters["trajectory"]["max-output-angle"]:
+			trajectory_points = trajectory_points[1:]
+		if trajectory_points.shape[0] == 0:
+			rospy.logerr("No remaining points after max output angle cut")
+			return
+		
 		trajectory_points = np.concatenate((np.asarray([[0, 0]]), trajectory_points), axis=0)
 
 		trajectory_array = Float64MultiArray()
@@ -1172,7 +1363,7 @@ class TrajectoryExtractorNode (object):
 		
 		# Intersection mode : Check whether the vehicle has reached the rejoin distance, and if so, try to catch the new lane
 		# otherwise, just wait further
-		if self.navigation_mode in (NavigationMode.FORWARD_SKIP, NavigationMode.LEFT_TURN, NavigationMode.RIGHT_TURN):
+		if self.navigation_mode.is_intersection():
 			remaining_distance = self.distance_till_rejoin(timestamp)
 			must_detect_trajectory = remaining_distance <= 0
 			if remaining_distance > 0:
@@ -1186,7 +1377,7 @@ class TrajectoryExtractorNode (object):
 			left_line, right_line, left_line_score, right_line_score = self.detect_lane(be_binary, scale_factor, timestamp)
 
 			# In intersection mode, if a new full lane has been found, catch it and go back to cruise 
-			if self.navigation_mode in (NavigationMode.FORWARD_SKIP, NavigationMode.LEFT_TURN, NavigationMode.RIGHT_TURN):
+			if self.navigation_mode.is_intersection():
 				if left_line is None or right_line is None:
 					rospy.loginfo("No full lane found to rejoin, waiting further…")
 					self.viz_intersection_mode(trajectory_viz, scale_factor, timestamp, None)

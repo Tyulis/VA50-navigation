@@ -1,17 +1,31 @@
 #!/usr/bin/env python3
+
+#   Copyright 2023 Grégori MIGNEROT, Élian BELMONTE, Benjamin STACH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
 import sys
 import math
 
 import yaml
 import numpy as np
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 import rospy
 from std_msgs.msg import Float32, String, UInt8
 from geometry_msgs.msg import TwistStamped
 
 from trajectory.msg import Trajectory
-from transformtrack.msg import TimeBatch
 from transformtrack.srv import TransformBatch, TransformBatchRequest
 from trafficsigns.msg import TrafficSignStatus, TrafficSign
 
@@ -70,7 +84,7 @@ class PurePursuitController (object):
         self.speed_publisher = rospy.Publisher(self.speed_topic, Float32, queue_size=10)
         self.steering_angle_publisher = rospy.Publisher(self.steering_angle_topic, Float32, queue_size=10)
         self.direction_publisher = rospy.Publisher(self.direction_topic, UInt8, queue_size=1)
-        self.speed_cap_publisher = rospy.Publisher(self.speed_cap_topic, Float32, queue_size=10)
+        #self.speed_cap_publisher = rospy.Publisher(self.speed_cap_topic, Float32, queue_size=10)
 
         rospy.loginfo("Everything ready")
 
@@ -78,8 +92,8 @@ class PurePursuitController (object):
     def get_map_transforms(self, start_times, end_time):
         """Get the transform matrix to transform 3d homogeneous coordinates in the right target timestamp"""
         request = TransformBatchRequest()
-        request.timestamps = TimeBatch(start_times=start_times, end_time=end_time)
-        request.unbias = False
+        request.start_times = start_times
+        request.end_time = end_time
         tries = 0
         while True:
             try:
@@ -95,9 +109,8 @@ class PurePursuitController (object):
                 self.transform_service = rospy.ServiceProxy(self.parameters["node"]["transform-service-name"], TransformBatch, persistent=True)
                 tries += 1
         transforms = np.asarray(response.transforms.data).reshape(response.transforms.layout.dim[0].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[2].size).transpose(0, 2, 1)
-        start_times_unbiased = start_times  #response.timestamps.start_times
-        end_time_unbiased = end_time  #response.timestamps.end_time
-        return transforms, start_times_unbiased, end_time_unbiased
+        distances = np.asarray(response.distances)
+        return transforms, distances
 
 
     def callback_velocity(self, data):
@@ -122,7 +135,7 @@ class PurePursuitController (object):
             trajectory_data = np.reshape(trajectory_data, (-1, 2))
 
             # Get transform matrix and apply it to the trajectory points
-            transforms, _, _ = self.get_map_transforms([trajectory_stamp], rospy.get_rostime())
+            transforms, distances = self.get_map_transforms([trajectory_stamp], rospy.get_rostime())
             transform = transforms[0]
             nb_points = trajectory_data.shape[0]
             trajectory_data_3d = np.concatenate((trajectory_data, np.zeros((nb_points, 1)), np.ones((nb_points, 1))), axis=1)
@@ -148,9 +161,17 @@ class PurePursuitController (object):
             # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
             if sign.type in ('stop', 'yield', 'no-entry', 'light-red', 'light-orange'):
                 position = np.c_[[sign.x, sign.y, sign.z, 1]]
+<<<<<<< HEAD
                 transforms, _, _ = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
                 current_position = transforms[0] @ position
                 distance = np.linalg.norm(current_position[:2])
+=======
+                transforms, distances = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
+                current_position = transforms[0] @ position
+                distance = max(0, current_position[1, 0] - (5 if sign.type in ("light-red", "light-orange") else 2))
+                if distance > self.parameters["control"]["brake-distance"]:
+                    return
+>>>>>>> main
 
                 self.is_stop_need = True
                 self.stop_type = 'light' if sign.type in ('light-red', 'light-orange') else 'sign'
@@ -159,12 +180,21 @@ class PurePursuitController (object):
                 self.current_stop_index = 0
 
             # Filter traffic signs where a direction is mandatory and publish on the direction topic
+<<<<<<< HEAD
             elif sign.type in ('right-only', 'keep-right'):
                 self.direction_publisher.publish(0b0100)
             elif sign.type in ('left-only', 'keep-left'):
                 self.direction_publisher.publish(0b0010)
             elif sign.type == 'ahead-only':
                 self.direction_publisher.publish(0b0001)
+=======
+            # elif sign.type in ('right-only', 'keep-right'):
+            #    self.direction_publisher.publish(0b0100)
+            # elif sign.type in ('left-only', 'keep-left'):
+            #    self.direction_publisher.publish(0b0010)
+            # elif sign.type == 'ahead-only':
+            #    self.direction_publisher.publish(0b0001)
+>>>>>>> main
             elif sign.type == 'light-green' and self.is_stop_need and self.stop_type == 'light':
                 self.is_stop_need = False
 
@@ -188,10 +218,10 @@ class PurePursuitController (object):
                 # Calc control input
                 vi = self.speed_control()
                 di, self.target_ind = self.pure_pursuit_steer_control(self.target_ind)
-                print(f"vi={vi}, self.real_speed={self.real_speed}")
+                print(f"vi={vi}, self.real_speed={self.real_speed}, self.target_speed={self.target_speed}")
 
+                #self.speed_cap_publisher.publish(1000)
                 self.speed_publisher.publish(vi)  # Control speed
-                self.speed_cap_publisher.publish(self.target_speed)
                 self.steering_angle_publisher.publish(di*180/math.pi) # Control steering angle
 
                 self.state.update(self.real_speed, self.real_angular_speed)
@@ -212,7 +242,7 @@ class PurePursuitController (object):
                 # plt.title("Speed[km/h]:" + str(self.state.v * 3.6)[:4])
                 # plt.pause(0.001)
 
-                rospy.loginfo("Published control inputs")
+                # rospy.loginfo("Published control inputs")
 
 
     def speed_control(self):

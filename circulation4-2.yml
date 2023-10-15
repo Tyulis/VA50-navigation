@@ -2,6 +2,7 @@
 node:
   trajectory-node-name: trajectory                         # Name of the trajectory extraction node
   transform-node-name: transform_batch_server              # Name of the transform service node
+  visualization-node-name: visualization
 
   image-topic: /forwardCamera/image_raw                    # Front camera topic                  :                       [Image]                              ⟶ trafficsigns, circulation
   camerainfo-topic: /forwardCamera/camera_info             # Front camera info topic             :                       [CameraInfo]                         ⟶ trafficsigns, circulation
@@ -13,6 +14,10 @@ node:
   speed-topic: /ZOE2UTBM/control/speed                     # Vehicle speed control topic         : control            ⟶ [Float32]
   speed-cap-topic: /ZOE2UTBM/control/max_speed             # Vehicle speed cap topic             : control            ⟶ [Float32]
   steering-angle-topic: /ZOE2UTBM/control/steering_angle   # Vehicle steering topic              : control            ⟶ [Float32]
+  lines-viz-topic: /navigation/viz/lines                   # Line detection visualization        : circulation        ⟶ [Image]                              ⟶ rviz
+  trajectory-viz-topic: /navigation/viz/trajectory         # Trajectory visualization            : circulation        ⟶ [Image]                              ⟶ rviz
+  trafficsigns-viz-topic: /navigation/viz/trafficsigns     # Line detection visualization        : trafficsigns       ⟶ [Image]                              ⟶ rviz
+
 
   transform-service-name: /circulation/TransformBatch      # Transform service address
   drop-service-name: /circulation/DropVelocity             # Transform service data drop address. To be used ONLY by circulation
@@ -29,12 +34,13 @@ transform:
 
 # Control node parameters
 control:
-  target-speed: 10.0                                       # Target speed for the vehicle, in km/h
+  target-speed: 8.0                                       # Target speed for the vehicle, in km/h
   k: 0.1
   Lfc: 5.0
   Kp: 0.5
   dt: 0.1
   WB: 2.588
+  brake-distance: 10
 
 # Values to expect from the overall environment
 environment:
@@ -45,7 +51,7 @@ environment:
 birdeye:
   x-range: 15                                              # The bird-eye view encompasses [-x-range, +x-range] meters on the X axis (left-right)
   y-range: 21.8                                            # The bird-eye view encompasses [+roi-y  , +y-range] meters on the Y axis (forward)
-  roi-y: 4.8                                               # Closest distance forward for meaningful data from the camera
+  roi-y: 3                                                 # Closest distance forward for meaningful data from the camera
   birdeye-size: 500                                        # Height of the bird-eye view in pixels. The width is deduced such that the y-range to x-range proportions are kept
 
 # Image preprocessing parameters
@@ -65,10 +71,12 @@ intersection:
     trafficsign: 1.00
     marking: 3.85
   mode-switch-distance: 3                                  # Switch to intersection mode at this distance in meters before the actual intersection detected start. Fixes some boundary effects.
-  default-rejoin-distance: 10                              # Try to rejoin a lane after this distance in meters travelled in the intersection
+  default-rejoin-distance: 15                              # Try to rejoin a lane after this distance in meters travelled in the intersection
   min-turn-radius: 5                                       # Clamp the turn radii between those two, in meters
   max-turn-radius: 25                                      # /
-  hint-detection-buffer: 5                                 # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  default-turn-radius: 12
+  hint-detection-buffer: 15                                # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  min-confidence: 0.9
 
 # Trajectory construction parameters
 trajectory:
@@ -83,6 +91,8 @@ trajectory:
   trajectory-start: 0                                      # Trajectories start at the point [0, trajectory-start] in vehicle frame
   line-score-threshold: 0.5                                # Unused, left for compatibility
   trajectory-score-threshold: 0.5                          # Points that are below this score are disregarded by the trajectory compilation routine
+  max-output-angle: 0.279
+  max-parallel-distance: 0.9
 
 # Line detection parameters
 find-lines-parameters:
@@ -108,7 +118,7 @@ fuzzy-lines:
   base-score: 4                                            # Base score from which maluses are applied
   centers:                                                 # Centers of each fuzzy subset, for each input variable, and for the output, in order [good, medium, bad]
     forward-distance: [4.8, 10.8, 21.8]                    # Distance of the closest point of the curve on the Y axis, in meters. Closer = better
-    line-distance: [0, 0.5, 2]                             # Orthogonal distance of the estimation vector to the expected markings, in meters. Closer = better
+    line-distance: [0, 1, 2]                               # Orthogonal distance of the estimation vector to the expected markings, in meters. Closer = better
     line-lengths: [10, 5, 0.0]                             # Length of the curve, in meters. Longer = better
     parallel-distances: [0, 0.3, 1]                        # Error on the lane width, in terms of expected lane widths. Lower = better
     parallel-angles: [0, 0.51, 1.24]                       # Mean difference to parallelism between the curves in radians. Lower = better
@@ -123,3 +133,9 @@ fuzzy-lines:
   single-line-selection-threshold: 0.6                     # A fallback single line is only considered good if its score is above this threshold, otherwise fail
   vertical-angle-tolerance: 0.5                            # Absolute tolerance in radians around the main lane angle for vectors to be considered
   main-angle-cut: 0.43                                     # Angles outside of [π/2 - main-angle-cut, π/2 + main-angle-cut] are disregarded for main lane angle estimation
+
+# Visualization parameters
+visualization:
+  circulation-lines-id: 0
+  circulation-trajectory-id: 1
+  trafficsigns-id: 2
