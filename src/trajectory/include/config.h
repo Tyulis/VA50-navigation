@@ -59,7 +59,7 @@ namespace config {
 		constexpr float size_tolerance = 0.2;
 		namespace crosswalk {
 			constexpr float ev2_edge_part = 0.5;
-			constexpr float max_rmse = 1.265;
+			constexpr float max_rmse = 0.6;
 			constexpr float dbscan_epsilon = 0.1;
 			constexpr int min_bands = 3;
 		}
@@ -74,12 +74,12 @@ namespace config {
 			constexpr float marking = 3.85;
 		}
 		constexpr int mode_switch_distance = 3;
-		constexpr float default_rejoin_distance = 10.0;
+		constexpr float default_rejoin_distance = 12.0;
 		constexpr float rejoin_factor = 0.8;
 		constexpr float min_turn_radius = 5.0;
 		constexpr float max_turn_radius = 25.0;
 		constexpr float default_turn_radius = 15.0;
-		constexpr int hint_detection_buffer = 5;
+		constexpr float hint_detection_buffer = 15.0;
 		constexpr float hint_clustering_distance = 2.0;
 	}
 	namespace trajectory {

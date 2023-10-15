@@ -12,6 +12,10 @@
  *  or merged with an existing hint if they are deemed different measurements of the same object
  *  - hint : IntersectionHint : New hint to consider */
 void TrajectoryExtractorNode::add_intersection_hint(IntersectionHint const& hint) {
+	// Skip hints while already in intersection mode
+	if (m_navigation_mode != NavigationMode::Cruise)
+		return;
+	
 	// Skip hints found too close to the last intersection
 	if (m_last_lane_rejoin.isZero()) {
 		arma::fmat transform = get_map_transforms(m_last_lane_rejoin, hint.timestamps.back());

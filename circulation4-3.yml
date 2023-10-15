@@ -78,7 +78,7 @@ intersection:
   min-turn-radius: 5.0                                     # Clamp the turn radii between those two, in meters
   max-turn-radius: 25.0                                    # /
   default-turn-radius: 15.0                                # Default turn radius in case there is no curvature information
-  hint-detection-buffer: 5                                 # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  hint-detection-buffer: 15.0                              # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
   hint-clustering-distance: 2.0                            # Epsilon distance for final hint clustering 
 
 # Trajectory construction parameters

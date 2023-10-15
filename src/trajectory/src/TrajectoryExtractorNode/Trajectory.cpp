@@ -147,9 +147,22 @@ float TrajectoryExtractorNode::turn_radius(ros::Time timestamp, float intersecti
 void TrajectoryExtractorNode::build_intersection_forward_trajectory(ros::Time image_timestamp, float intersection_distance) {
 	m_rejoin_distance = config::intersection::default_rejoin_distance;
 
+	// Cut the currently recorded trajectories at the intersection
+	std::vector<DiscreteCurve> trajectories = pull_trajectories(image_timestamp);
+	for (auto it = trajectories.begin(); it != trajectories.end(); it++) {
+		arma::uvec filter = arma::find(it->curve.row(1) >= intersection_distance);
+		it->curve.shed_cols(filter);
+	}
+
+	// Find the angle of the trajectory to generate
+	float main_angle = estimate_main_angle(trajectories);
+
 	// Just output a straight trajectory for as long as necessary
-	arma::fmat curve = arma::regspace<arma::fmat>(0, config::trajectory::trajectory_step, 100).t();
-	curve.insert_rows(0, 1);
+	arma::frowvec distances = arma::regspace<arma::frowvec>(0, config::trajectory::trajectory_step, 100);
+	arma::fmat curve(2, distances.n_elem);
+	curve.row(0) = distances * std::cosf(main_angle);
+	curve.row(1) = distances * std::sinf(main_angle);
+	
 	DiscreteCurve trajectory(std::move(curve), image_timestamp);
 	m_current_trajectory = trajectory;
 }
