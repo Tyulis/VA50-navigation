@@ -68,6 +68,27 @@ inline std::tuple<arma::fmat, arma::fmat> meshgrid(arma::fvec const& vector) {
 	return {col_grid, row_grid};
 }
 
+/** Convert a transform matrix to sXYZ convention Euler angles
+  * Method taken from Matthew Brett’s transform3d Python package
+  * - transform : arma::fmat[4, 4]     : Transform matrix
+  * <------------ std::array<float, 3> : sXYZ Euler angles corresponding to the matrix */
+inline std::array<float, 3> transform_to_sXYZ_euler(arma::fmat const& transform) {
+	std::array<float, 3> angles;
+	
+	float cy = std::sqrtf(transform(0, 0)*transform(0, 0) + transform(1, 0)*transform(1, 0));
+	if (cy > 0) {
+        angles[0] = std::atan2( transform(2, 1), transform(2, 2));
+        angles[1] = std::atan2(-transform(2, 0), cy);
+        angles[2] = std::atan2( transform(1, 2), transform(0, 0));
+    } else {
+        angles[0] = std::atan2(-transform(1, 2),  transform(1, 1));
+        angles[1] = std::atan2(-transform(2, 0),  cy);
+        angles[2] = 0.0f;
+	}
+
+	return angles;
+}
+
 /** Config wrappers for fish2bird */
 inline arma::fmat birdeye_to_target_config(arma::fmat const& points) {
 	return fish2bird::birdeye_to_target_2d(points, -config::birdeye::x_range, config::birdeye::x_range, config::birdeye::roi_y, config::birdeye::y_range, 

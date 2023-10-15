@@ -73,14 +73,34 @@ void TrajectoryExtractorNode::callback_camerainfo(sensor_msgs::CameraInfo::Const
 void TrajectoryExtractorNode::callback_direction(std_msgs::UInt8::ConstPtr const& message) {
 	Direction direction(message->data);
 	switch (direction) {
-		case Direction::Forward: ROS_INFO("Updated next direction to FORWARD"); break;
-		case Direction::Left:    ROS_INFO("Updated next direction to LEFT");    break;
-		case Direction::Right:   ROS_INFO("Updated next direction to RIGHT");   break;
+		case Direction::Forward:
+			ROS_INFO("Updated next direction to FORWARD");
+			m_next_direction = Direction::Forward;
+			break;
+		case Direction::Left:
+			ROS_INFO("Updated next direction to LEFT");
+			m_next_direction = Direction::Left;
+			break;
+		case Direction::Right:
+			ROS_INFO("Updated next direction to RIGHT");
+			m_next_direction = Direction::Right;
+			break;
+		case Direction::DoubleLane:
+			ROS_INFO("Next intersection has a double lane");
+			m_next_double_lane = true;
+			break;
+		case Direction::ForceIntersection:
+			ROS_INFO("Force intersection mode");
+			switch (m_next_direction) {
+				case Direction::Forward: switch_intersection(NavigationMode::IntersectionForward, ros::Time::now(), 0);  break;
+				case Direction::Left   : switch_intersection(NavigationMode::IntersectionLeft,    ros::Time::now(), 0);  break;
+				case Direction::Right  : switch_intersection(NavigationMode::IntersectionRight,   ros::Time::now(), 0);  break;
+			}
+			break;
 		default:
 			ROS_ERROR("Invalid direction ID received : %d", message->data);
 			return;
 	}
-	m_next_direction = direction;
 }
 
 /** Callback called when traffic signs are detected and received

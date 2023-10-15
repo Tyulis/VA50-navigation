@@ -45,8 +45,8 @@ class TrajectoryExtractorNode {
 	private:
 		// Transform management and measurement
 		arma::fmat get_transform(std::string const& source_frame, std::string const& target_frame);
-		arma::fcube get_map_transforms(std::vector<ros::Time> start_times, ros::Time end_time);
-		arma::fmat get_map_transforms(ros::Time start_time, ros::Time end_time);
+		std::tuple<arma::fcube, arma::frowvec> get_map_transforms(std::vector<ros::Time> start_times, ros::Time end_time);
+		std::tuple<arma::fmat, float> get_map_transforms(ros::Time start_time, ros::Time end_time);
 		void drop_velocity(ros::Time end_time);
 
 		// Intersection management
@@ -109,6 +109,7 @@ class TrajectoryExtractorNode {
 		// Intersection management
 		NavigationMode m_navigation_mode;
 		Direction m_next_direction;
+		bool m_next_double_lane;
 		ros::Time m_last_lane_rejoin;
 		ros::Time m_last_mode_switch;
 		float m_rejoin_distance;

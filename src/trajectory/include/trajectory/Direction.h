@@ -14,6 +14,9 @@ class Direction {
 			ForwardRight = 5,
 			LeftRight = 6,
 			All = 7,
+
+			DoubleLane = 8,
+			ForceIntersection = 16,
 		};
 
 		inline constexpr Direction() : m_value(None) {}

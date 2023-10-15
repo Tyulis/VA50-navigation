@@ -220,7 +220,7 @@ std::vector<DiscreteCurve> extract_branches(cv::Mat const& image) {
                                                   number of curves or any correspondance with the original curves whatsoever */
 std::vector<DiscreteCurve> filter_lines(std::vector<DiscreteCurve> const& branches, float scale_factor) {
 	// Filter the extracted branches, and cut them where the angle gets too sharp, to avoid rough edges getting in the way of merging
-	std::vector<DiscreteCurve> cluster_lines;
+	std::vector<DiscreteCurve> cut_lines;
 	for (auto it = branches.begin(); it != branches.end(); it++) {
 		// Too few points or too short (physically)
 		if (it->size() <= config::lines::savgol_degree + 1 || it->length() <= config::lines::min_branch_length)
@@ -231,9 +231,19 @@ std::vector<DiscreteCurve> filter_lines(std::vector<DiscreteCurve> const& branch
 		if (curve.size() <= config::lines::savgol_degree + 1)
 			continue;
 		
-		curve.savgol_filter(config::lines::initial_filter_window);
 		std::vector<DiscreteCurve> cut_curve = cut_curve_angles(curve, config::lines::min_branch_length, config::lines::max_curvature_metric * scale_factor);
 		cluster_lines.insert(cluster_lines.end(), cut_curve.begin(), cut_curve.end());
+	}
+
+	// Smooth the cuts
+	std::vector<DiscreteCurve> cluster_lines;
+	for (auto it = cut_lines.begin(); it != cut_lines.end(); it++) {
+		DiscreteCurve curve = *it;
+		if (curve.size() <= config::lines::savgol_degree + 1)
+			continue;
+		
+		curve.savgol_filter(config::lines::initial_filter_window);
+		cluster_lines.push_back(curve);
 	}
 
 	// Merge lines that are in the continuity of each other

@@ -15,6 +15,7 @@ void TrajectoryExtractorNode::run() {
 	// Intersection management
 	m_next_direction = Direction::Forward;
 	m_navigation_mode = NavigationMode::Cruise;
+	m_next_double_lane = false;
 
 	// Trajectory buffers and data
 	m_trajectory_seq = 0;

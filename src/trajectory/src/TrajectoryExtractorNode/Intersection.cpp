@@ -18,8 +18,7 @@ void TrajectoryExtractorNode::add_intersection_hint(IntersectionHint const& hint
 	
 	// Skip hints found too close to the last intersection
 	if (m_last_lane_rejoin.isZero()) {
-		arma::fmat transform = get_map_transforms(m_last_lane_rejoin, hint.timestamps.back());
-		float distance = arma::norm(transform(arma::span(0, 2), 3));  // Norm of the translation vector
+		auto [transform, distance] = get_map_transforms(m_last_lane_rejoin, hint.timestamps.back());
 		
 		// Too close to the previous intersection, skip
 		if (distance < config::intersection::hint_detection_buffer)
@@ -50,7 +49,7 @@ bool TrajectoryExtractorNode::match_intersection_hint(IntersectionHint const& ex
 		return false;
 	
 	// Take the centroid of the existing hint positions at the timestamp of the new hint measurement
-	arma::fcube transforms = get_map_transforms(existing_hint.timestamps, hint.timestamps.back());
+	auto [transforms, distances] = get_map_transforms(existing_hint.timestamps, hint.timestamps.back());
 	arma::fmat existing_positions = transform_positions(transforms, existing_hint.positions);
 	arma::fvec existing_centroid = arma::mean(existing_positions, 1);
 	return arma::norm(existing_centroid - hint.positions.back()) < IntersectionHint::match_threshold(hint.category);
@@ -115,7 +114,7 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
 		return {-1, Direction::None};
 
 	// Transform to the current timestamp
-	arma::fcube transforms = get_map_transforms(hint_timestamps, image_timestamp);
+	auto [transforms, distances] = get_map_transforms(hint_timestamps, image_timestamp);
 	arma::fmat transformed = transform_positions(transforms, hint_positions);
 
 	// Project everything onto the current directional vector (0, 1, 0) and disregard points that are behind the vehicle
@@ -163,7 +162,6 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
   * <------------------ float      : Signed distance until the rejoin distance
 		                             (negative if the vehicle is already farther than `m_rejoin_distance`) */
 float TrajectoryExtractorNode::distance_until_rejoin(ros::Time image_timestamp) {
-	arma::fmat transform = get_map_transforms(m_last_mode_switch, image_timestamp);
-	float distance = arma::norm(transform(arma::span(0, 2), 3));
+	auto [transform, distance] = get_map_transforms(m_last_mode_switch, image_timestamp);
 	return m_rejoin_distance - distance;
 }

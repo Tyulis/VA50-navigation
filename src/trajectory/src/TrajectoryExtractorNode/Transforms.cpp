@@ -55,8 +55,9 @@ arma::fmat TrajectoryExtractorNode::get_transform(std::string const& source_fram
   * - start_times : std::vector<ros::Time> : Timestamps to get the transforms from
   * - end_time    : ros::Time              : Target timestamp, to get the transforms to
   * <-------------- arma::fcube[4, 4, N]   : 3D homogeneous transform matrices to transform points in the vehicle frame
-											 at `start_times[i]` to the vehicle frame at `end_time` */		
-arma::fcube TrajectoryExtractorNode::get_map_transforms(std::vector<ros::Time> start_times, ros::Time end_time) {
+											 at `start_times[i]` to the vehicle frame at `end_time`
+  * */		
+std::tuple<arma::fcube, arma::frowvec> TrajectoryExtractorNode::get_map_transforms(std::vector<ros::Time> start_times, ros::Time end_time) {
 	// Build the request to the transform service, see transformtrack/srv/TransformBatch.srv and transformtrack/msg/TimeBatch.msg for info
 	transformtrack::TransformBatch::Request request;
 	transformtrack::TransformBatch::Response response;
@@ -68,8 +69,8 @@ arma::fcube TrajectoryExtractorNode::get_map_transforms(std::vector<ros::Time> s
 	// in case the network gets in the way, so in case of disconnection, retry 10 times to reconnect then fail
 	int tries = 0;
 	while (true) {
-		// Apparently, when a call to the service is pending, the node is free to service other callbacks,
-		// including callback_trafficsign that also call this service
+		// Apparently, when a call to the service is pending, the node is free to serve other callbacks,
+		// including callback_trafficsign that also calls this service
 		// So with the traffic signs subscriber active, it’s only a matter of time until both get to their transform service call concurrently
 		// For some reason, ROS allows it, and for some reason it deadlocks ROS as a whole
 		// So let’s throw in a lock to prevent ROS from killing itself
@@ -92,14 +93,18 @@ arma::fcube TrajectoryExtractorNode::get_map_transforms(std::vector<ros::Time> s
 	}
 
 	// The call was successful, get the transforms in the right format and return
-	arma::fcube transforms(response.transforms.data.data(), response.transforms.layout.dim[2].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[0].size);
-	return transforms;
+	// FIXME : This is for compatibility with the former Python interface
+	arma::dcube transforms64(response.transforms.data.data(), response.transforms.layout.dim[2].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[0].size, false);
+	arma::fcube transforms(transforms64);
+	arma::frowvec distances(response.distances);
+	return transforms, distances;
 }
 
 /** Convenience wrapper for get_map_transforms with a single start timestamp */
-arma::fmat TrajectoryExtractorNode::get_map_transforms(ros::Time start_time, ros::Time end_time) {
+std::tuple<arma::fmat, float> TrajectoryExtractorNode::get_map_transforms(ros::Time start_time, ros::Time end_time) {
 	std::vector<ros::Time> start_times = {start_time};
-	return get_map_transforms(start_times, end_time).slice(0);
+	auto [transforms, distances] =  get_map_transforms(start_times, end_time);
+	return transforms.slice(0), distances(0);
 }
 
 /** Call the DropVelocity service, such that the TransformBatch service discards its old velocity data

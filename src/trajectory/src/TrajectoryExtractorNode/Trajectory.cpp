@@ -97,7 +97,7 @@ std::vector<DiscreteCurve> TrajectoryExtractorNode::pull_trajectories(ros::Time 
 	for (auto it = m_trajectory_history.begin() ; it != m_trajectory_history.end(); it++)
 		trajectory_timestamps.push_back(it->timestamp);
 	
-	arma::fcube transforms = get_map_transforms(trajectory_timestamps, timestamp);
+	auto [transforms, distances] = get_map_transforms(trajectory_timestamps, timestamp);
 	return transform_positions(transforms, m_trajectory_history);
 }
 
@@ -162,7 +162,7 @@ void TrajectoryExtractorNode::build_intersection_forward_trajectory(ros::Time im
 	arma::fmat curve(2, distances.n_elem);
 	curve.row(0) = distances * std::cosf(main_angle);
 	curve.row(1) = distances * std::sinf(main_angle);
-	
+
 	DiscreteCurve trajectory(std::move(curve), image_timestamp);
 	m_current_trajectory = trajectory;
 }
