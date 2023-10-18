@@ -71,11 +71,10 @@ void TrajectoryVisualizer::update() {
 	
 	// Merge both images
 	if (m_full_viz.empty())
-		m_full_viz = cv::Mat(std::max(m_line_viz.rows, m_trajectory_viz.rows), m_line_viz.cols + 30 + m_trajectory_viz.cols, CV_8UC3);
+		m_full_viz = cv::Mat(std::max(m_line_viz.rows, m_trajectory_viz.rows), m_line_viz.cols + m_trajectory_viz.cols, CV_8UC3);
 	
-	m_full_viz.colRange(m_line_viz.cols, m_line_viz.cols + 30) = cv::Scalar(0, 0, 0);
 	m_line_viz.copyTo(m_full_viz(cv::Rect(0, 0, m_line_viz.cols, m_line_viz.rows)));
-	m_trajectory_viz.copyTo(m_full_viz(cv::Rect(m_line_viz.cols + 30, 0, m_trajectory_viz.cols, m_trajectory_viz.rows)));
+	m_trajectory_viz.copyTo(m_full_viz(cv::Rect(m_line_viz.cols, 0, m_trajectory_viz.cols, m_trajectory_viz.rows)));
 
 	cv::imshow("viz", m_full_viz);
 	cv::waitKey(1);

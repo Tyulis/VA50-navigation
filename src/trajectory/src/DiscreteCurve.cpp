@@ -139,3 +139,32 @@ DiscreteCurve compile_line(std::vector<DiscreteCurve> const& lines, float min_sc
 
 	return DiscreteCurve(std::move(result_points), std::move(result_scores));
 }
+
+float mean_parallel_distance(DiscreteCurve const& curve1, DiscreteCurve const& curve2) {
+	DiscreteCurve longest_line;
+	DiscreteCurve shortest_line;
+	if (curve1.length() > curve2.length()) {
+		longest_line = curve1;
+		shortest_line = curve2;
+	} else {
+		longest_line = curve2;
+		shortest_line = curve1;
+	}
+
+	// Now compute the average orthogonal distance and the average angle difference
+	float paralleldiff = 0.0f;
+	int valid_points = 0;
+	for (int p = 0; p < longest_line.size() - 1; p++) {
+		auto [index, segment_part] = shortest_line.project_point(longest_line.curve.col(p), false);
+		if (index < 0)
+			continue;
+
+		paralleldiff += arma::norm(longest_line.get_point(p) - shortest_line.get_point(index, segment_part));
+		valid_points += 1;
+	}
+
+	if (valid_points == 0)
+		return INFINITY;
+	else
+		return paralleldiff / valid_points;
+}

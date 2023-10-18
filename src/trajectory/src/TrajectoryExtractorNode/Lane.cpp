@@ -18,15 +18,6 @@
   * <------------------ DiscreteCurve               : Left line as a discrete curve in pixel coordinates
   * <------------------ DiscreteCurve               : Right line as a discrete curve in pixel coordinates (both can be defined or invalid at the same time) */
 std::tuple<DiscreteCurve, DiscreteCurve> TrajectoryExtractorNode::detect_lane(std::vector<DiscreteCurve>& lines, float scale_factor, ros::Time image_timestamp, std::vector<Marking> const& markings) {
-	// Flip the lines so that they start at the bottom of the image, and convert them to metrix
-	for (auto it = lines.begin(); it != lines.end(); it++) {
-		// Inverted because before birdeye_to_target, the y axis is flipped
-		if (it->curve(1, 0) < it->curve(1, it->size() - 1))
-			it->curve = birdeye_to_target_config(arma::fliplr(std::move(it->curve)));
-		else
-			it->curve = birdeye_to_target_config(std::move(it->curve));
-	}
-	
 	// Estimate the main angle of those lines
 	// If we are on a road, chances are, a lot of curve segments belong to lane markings
 	// In the few meters ahead of the vehicle, those have most likely approximately all the same angle

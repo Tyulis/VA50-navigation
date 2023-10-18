@@ -12,7 +12,12 @@ void TrajectoryExtractorNode::add_local_trajectory(DiscreteCurve const& trajecto
 		m_trajectory_history.erase(m_trajectory_history.begin(), m_trajectory_history.begin() + (m_trajectory_history.size() - config::trajectory::history_size));
 	
 	// Make the transform service discard velocity data older than what will be useful from this point on
-	drop_velocity(m_trajectory_history[0].timestamp);
+	double min_timestamp = m_trajectory_history[0].timestamp.toSec();
+	for (auto it = m_intersection_hints.begin(); it != m_intersection_hints.end(); it++) {
+		if (it->timestamps[0].toSec() < min_timestamp)
+			min_timestamp = it->timestamps[0].toSec();
+	}
+	drop_velocity(ros::Time(min_timestamp));
 }
 
 
@@ -80,6 +85,25 @@ void TrajectoryExtractorNode::compile_trajectory(ros::Time timestamp, DiscreteCu
 	// If the trajectory estimate is valid, smooth it and add it to the history buffer
 	trajectory.timestamp = timestamp;
 	trajectory.savgol_filter(7);
+
+	if (m_current_trajectory.is_valid() && !m_navigation_mode.is_intersection()) {
+		auto [transform, distance] = get_map_transforms(m_current_trajectory.timestamp, timestamp);
+		DiscreteCurve local_current_trajectory = transform_positions(transform, m_current_trajectory);
+		local_current_trajectory.curve.shed_cols(arma::find(local_current_trajectory.curve.row(1) <= config::birdeye::roi_y));
+
+		if (local_current_trajectory.size() > 4) {
+			// If the new trajectory is too far away from the existing one, invalidate it
+			float parallel_distance = mean_parallel_distance(trajectory, local_current_trajectory);
+			if (parallel_distance > config::trajectory::max_parallel_distance) {
+				if (config::node::visualize) {
+					std::vector<cv::Point> viz_points = arma::conv_to<std::vector<cv::Point>>::from(target_to_birdeye_config(trajectory.curve));
+					cv::polylines(viz, viz_points, false, cv::Scalar(0, 255, 255), 2);  // Red
+				}
+				return;
+			}
+		}
+	}
+
 	add_local_trajectory(trajectory);
 
 	if (config::node::visualize) {
@@ -160,8 +184,8 @@ void TrajectoryExtractorNode::build_intersection_forward_trajectory(ros::Time im
 	// Just output a straight trajectory for as long as necessary
 	arma::frowvec distances = arma::regspace<arma::frowvec>(0, config::trajectory::trajectory_step, 100);
 	arma::fmat curve(2, distances.n_elem);
-	curve.row(0) = distances * std::cosf(main_angle);
-	curve.row(1) = distances * std::sinf(main_angle);
+	curve.row(0) = distances * std::cos(main_angle);
+	curve.row(1) = distances * std::sin(main_angle);
 
 	DiscreteCurve trajectory(std::move(curve), image_timestamp);
 	m_current_trajectory = trajectory;
@@ -175,15 +199,25 @@ void TrajectoryExtractorNode::build_intersection_left_trajectory(ros::Time image
 	// except the final trajectory is one radius further to accomodate the additonal lane to skip
 	float trajectory_radius = turn_radius(image_timestamp, intersection_distance);	
 
-	// Compute the trajectory as a quarter circle to the right with that radius
+	// Compute the trajectory as a little straight path then a quarter circle to the right with that radius
 	float angle_step = config::trajectory::trajectory_step / trajectory_radius;
 	arma::frowvec angles = arma::regspace<arma::frowvec>(0, angle_step, arma::datum::pi / 2);
-	arma::fmat curve(2, angles.n_elem);
-	curve.row(0) = trajectory_radius * (arma::cos(angles) - 1);
-	curve.row(1) = trajectory_radius * arma::sin(angles) + intersection_distance + config::environment::lane_width;
+	
+	float init_distance = ((m_next_double_lane)? 1.75f : 1.0f) * config::environment::lane_width;
+	int init_steps = std::floor(init_distance / config::trajectory::trajectory_step);
+
+	arma::fmat curve(2, angles.n_elem + init_steps);
+	if (init_steps > 0) {
+		curve.submat(0, 0, 0, init_steps - 1).fill(0.0f);
+		curve.submat(1, 0, 1, init_steps - 1) = arma::regspace<arma::fmat>(0, init_distance, config::trajectory::trajectory_step);
+	}
+
+	curve.submat(0, init_steps, 0, curve.n_cols - 1) = trajectory_radius * (arma::cos(angles) - 1);
+	curve.submat(1, init_steps, 1, curve.n_cols - 1) = trajectory_radius * arma::sin(angles) + intersection_distance + init_distance;
 	
 	m_current_trajectory = DiscreteCurve(std::move(curve), image_timestamp);
-	m_rejoin_distance = std::max(config::environment::lane_width + intersection_distance + trajectory_radius * (config::intersection::rejoin_factor * std::sqrt(2.0f) / 2), config::intersection::default_rejoin_distance);
+	// m_rejoin_distance = std::max(config::environment::lane_width + intersection_distance + trajectory_radius * (config::intersection::rejoin_factor * std::sqrt(2.0f) / 2), config::intersection::default_rejoin_distance);
+	m_rejoin_distance = -1;
 }
 
 /** Precompute the trajectory to follow to turn right at an intersection
@@ -200,7 +234,8 @@ void TrajectoryExtractorNode::build_intersection_right_trajectory(ros::Time imag
 	curve.row(1) = trajectory_radius * arma::sin(angles) + intersection_distance;
 	
 	m_current_trajectory = DiscreteCurve(std::move(curve), image_timestamp);
-	m_rejoin_distance = std::max(intersection_distance + trajectory_radius * (config::intersection::rejoin_factor * std::sqrt(2.0f) / 2), config::intersection::default_rejoin_distance);
+	// m_rejoin_distance = std::max(intersection_distance + trajectory_radius * (config::intersection::rejoin_factor * std::sqrt(2.0f) / 2), config::intersection::default_rejoin_distance);
+	m_rejoin_distance = -1;  // Delegate this to distance_until_rejoin, that compares the angle instead of distance. FIXME : Architecture-wise, this is crap.
 }
 
 /** Update the current trajectory to the given timestamp, using the trajectory history buffers
@@ -222,20 +257,30 @@ void TrajectoryExtractorNode::update_trajectory(ros::Time timestamp, cv::Mat& vi
 	arma::fvec start_point = {0, config::trajectory::trajectory_start};
 	DiscreteCurve compiled_trajectory = compile_line(trajectories, config::trajectory::trajectory_score_threshold, start_point, config::trajectory::trajectory_step);
 
-	// Smooth it and update the trajectory to be published
-	if (compiled_trajectory.is_valid() && compiled_trajectory.size() > 3) {
-		compiled_trajectory.cut_angles(arma::datum::pi / 2);
-		compiled_trajectory.savgol_filter(7);
-		compiled_trajectory.timestamp = timestamp;
-		m_current_trajectory = compiled_trajectory;
-
-		if (config::node::visualize) {
-			std::vector<cv::Point> viz_points = arma::conv_to<std::vector<cv::Point>>::from(target_to_birdeye_config(compiled_trajectory.curve));
-			cv::polylines(viz, viz_points, false, cv::Scalar(60, 255, 255), 2);  // Green
-		}
+	// Failure : make the current trajectory invalid
+	if (!compiled_trajectory.is_valid() || compiled_trajectory.size() <= 3) {
+		m_current_trajectory = DiscreteCurve();
+		return;
 	}
 
-	// Failure : make the current trajectory invalid
-	else
+	compiled_trajectory.cut_angles(arma::datum::pi / 2);
+	compiled_trajectory.savgol_filter(7);
+	compiled_trajectory.timestamp = timestamp;
+
+	// Cut the first points if the angles they make with the forward vector is too sharp
+	while (compiled_trajectory.curve.n_cols > 0 && std::abs(M_PI / 2 - std::atan2(compiled_trajectory.curve(1, 0), compiled_trajectory.curve(0, 0))) > config::trajectory::max_output_angle)
+		compiled_trajectory.curve.shed_col(0);
+	
+	if (compiled_trajectory.size() <= 3) {
+		ROS_ERROR("Not enough points remaining after max output angle filter (%d points)", compiled_trajectory.size());
 		m_current_trajectory = DiscreteCurve();
+		return;
+	}
+
+	m_current_trajectory = compiled_trajectory;
+
+	if (config::node::visualize) {
+		std::vector<cv::Point> viz_points = arma::conv_to<std::vector<cv::Point>>::from(target_to_birdeye_config(compiled_trajectory.curve));
+		cv::polylines(viz, viz_points, false, cv::Scalar(60, 255, 255), 2);  // Green
+	}
 }

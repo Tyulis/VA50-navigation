@@ -17,14 +17,12 @@ void TrajectoryExtractorNode::switch_cruise(ros::Time image_timestamp) {
 	switch_navigation_mode(NavigationMode::Cruise, image_timestamp);
 	m_next_direction = Direction::Forward;
 	m_last_lane_rejoin = image_timestamp;
+	m_next_direction = false;
 }
 
 /** Switch to an intersection navigation mode, and compute the necessary trajectories */
 void TrajectoryExtractorNode::switch_intersection(NavigationMode mode, ros::Time image_timestamp, float intersection_distance) {
-	if (!mode.is_intersection()) {
-		switch_panic(NavigationMode::PanicInvalid, image_timestamp, "Invalid navigation mode for switch_intersection : " + std::to_string(mode));
-		return;
-	}
+	assert(mode.is_intersection());
 
 	switch_navigation_mode(mode, image_timestamp);
 

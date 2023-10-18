@@ -232,7 +232,7 @@ std::vector<DiscreteCurve> filter_lines(std::vector<DiscreteCurve> const& branch
 			continue;
 		
 		std::vector<DiscreteCurve> cut_curve = cut_curve_angles(curve, config::lines::min_branch_length, config::lines::max_curvature_metric * scale_factor);
-		cluster_lines.insert(cluster_lines.end(), cut_curve.begin(), cut_curve.end());
+		cut_lines.insert(cut_lines.end(), cut_curve.begin(), cut_curve.end());
 	}
 
 	// Smooth the cuts

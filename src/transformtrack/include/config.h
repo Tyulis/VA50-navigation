@@ -32,12 +32,13 @@ namespace config {
 		constexpr float sim_interval = 0.005;
 	}
 	namespace control {
-		constexpr float target_speed = 10.0;
+		constexpr float target_speed = 8.0;
 		constexpr float k = 0.1;
 		constexpr float Lfc = 5.0;
 		constexpr float Kp = 0.5;
 		constexpr float dt = 0.1;
 		constexpr float WB = 2.588;
+		constexpr int brake_distance = 10;
 	}
 	namespace environment {
 		constexpr float lane_width = 3.5;
@@ -46,7 +47,7 @@ namespace config {
 	namespace birdeye {
 		constexpr float x_range = 15.0;
 		constexpr float y_range = 21.8;
-		constexpr float roi_y = 4.8;
+		constexpr float roi_y = 3.0;
 		constexpr int birdeye_size = 500;
 	}
 	namespace preprocess {
@@ -57,6 +58,7 @@ namespace config {
 	}
 	namespace markings {
 		constexpr float size_tolerance = 0.2;
+		constexpr float transverse_angle = 0.314;
 		namespace crosswalk {
 			constexpr float ev2_edge_part = 0.5;
 			constexpr float max_rmse = 0.6;
@@ -74,13 +76,15 @@ namespace config {
 			constexpr float marking = 3.85;
 		}
 		constexpr int mode_switch_distance = 3;
-		constexpr float default_rejoin_distance = 12.0;
+		constexpr float default_rejoin_distance = 15.0;
 		constexpr float rejoin_factor = 0.8;
 		constexpr float min_turn_radius = 5.0;
 		constexpr float max_turn_radius = 25.0;
-		constexpr float default_turn_radius = 15.0;
+		constexpr float default_turn_radius = 11.0;
 		constexpr float hint_detection_buffer = 15.0;
 		constexpr float hint_clustering_distance = 2.0;
+		constexpr float hint_y_threshold = -4.0;
+		constexpr float min_confidence = 0.9;
 	}
 	namespace trajectory {
 		constexpr int history_size = 15;
@@ -92,6 +96,8 @@ namespace config {
 		constexpr int trajectory_start = 0;
 		constexpr float line_score_threshold = 0.5;
 		constexpr float trajectory_score_threshold = 0.5;
+		constexpr float max_output_angle = 0.279;
+		constexpr float max_parallel_distance = 0.9;
 	}
 	namespace lines {
 		constexpr int savgol_degree = 2;
@@ -115,11 +121,11 @@ namespace config {
 		constexpr int base_score = 4;
 		namespace centers {
 			constexpr float forward_distance[3] = {4.8, 10.8, 21.8};
-			constexpr float line_distance[3] = {0, 0.5, 2};
-			constexpr float line_lengths[3] = {10, 5, 0.0};
-			constexpr float parallel_distances[3] = {0, 0.3, 1};
-			constexpr float parallel_angles[3] = {0, 0.51, 1.24};
-			constexpr float output[5] = {0, 0.25, 0.5, 0.8, 1};
+			constexpr float line_distance[3] = {0.0, 1.0, 2.0};
+			constexpr float line_lengths[3] = {10.0, 5.0, 0.0};
+			constexpr float parallel_distances[3] = {0.0, 0.3, 1.0};
+			constexpr float parallel_angles[3] = {0.0, 0.51, 1.24};
+			constexpr float output[5] = {0.0, 0.25, 0.5, 0.8, 1.0};
 		}
 		namespace malus {
 			constexpr int forward_distance[3] = {0, -1, -3};

@@ -1,6 +1,7 @@
 #include <mlpack/methods/dbscan.hpp>
 
 #include "trajectory/Utility.h"
+#include "trajectory/Statistics.h"
 #include "trajectory/TrajectoryExtractorNode.h"
 
 
@@ -69,13 +70,24 @@ void TrajectoryExtractorNode::update_intersection(ros::Time image_timestamp) {
 	if (intersection_directions != Direction::None && intersection_distance < config::intersection::mode_switch_distance) {
 		// The chosen direction is not allowed at this intersection
 		if (!(intersection_directions & m_next_direction)) {
-			// The intersection does not allow the chosen direction : go forth, keep for next time
-			if (intersection_directions & Direction::Forward)
+			if (intersection_directions == Direction::None) {
+				switch_panic(NavigationMode::PanicInvalid, image_timestamp, "No direction available at the next intersection");
+				return;
+			}
+			// Only one direction available : follow it
+			else if (m_next_direction.is_single_direction()) {
+				m_next_direction = intersection_directions;
+			}
+			// Forward allowed : go forward and keep the current direction for next time
+			else if (intersection_directions & Direction::Forward) {
 				switch_intersection(NavigationMode::IntersectionForward, image_timestamp, intersection_distance);
-			
+				return;
+			}
 			// Only left or right, no direction chosen : panic, wait for input
-			else
+			else {
 				switch_panic(NavigationMode::PanicNoDirection, image_timestamp, "No direction chosen");
+				return;
+			}
 		}
 
 		// Switch to the relevant intersection mode
@@ -92,8 +104,8 @@ void TrajectoryExtractorNode::update_intersection(ros::Time image_timestamp) {
 
 /** Estimate the position and directions of the next intersection 
  *  - image_timestamp : ros::Time : Timestamp to do the estimation at
- *  <------------------ float     : Distance to the next intersection
- *  <------------------ Direction : Directions available at the next intersection */
+ *  <------------------ float     : Distance to the next intersection, or -1 if no data available
+ *  <------------------ Direction : Directions available at the next intersection, or Direction::None if no data available */
 std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Time image_timestamp) {
 	if (m_intersection_hints.empty())
 		return {-1, Direction::None};
@@ -119,14 +131,21 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
 
 	// Project everything onto the current directional vector (0, 1, 0) and disregard points that are behind the vehicle
 	arma::dmat current_distances = arma::conv_to<arma::dmat>::from(transformed.row(1));
-	arma::uvec forward_filter = arma::find(current_distances >= 0);
+	arma::uvec forward_filter = arma::find(current_distances >= config::intersection::hint_y_threshold);
 	current_distances = current_distances(forward_filter);
 	hint_indices = hint_indices(forward_filter);
+
+	if (current_distances.is_empty())
+		return {-1, Direction::None};
 
 	// Less than two hints : just take the closest one
 	if (current_distances.n_elem <= 2) {
 		arma::uword selected_index = current_distances.index_min();
 		IntersectionHint hint = m_intersection_hints[hint_indices(selected_index)];
+		
+		if (hint.confidence() < config::intersection::min_confidence)
+			return {-1, Direction::None};
+		
 		return {current_distances(selected_index), hint.direction_hint()};
 	}
 
@@ -140,6 +159,10 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
 	if (arma::min(assignments) == SIZE_MAX) {
 		arma::uword selected_index = current_distances.index_min();
 		IntersectionHint hint = m_intersection_hints[hint_indices(selected_index)];
+		
+		if (hint.confidence() < config::intersection::min_confidence)
+			return {-1, Direction::None};
+		
 		return {current_distances(selected_index), hint.direction_hint()};
 	}
 
@@ -147,8 +170,27 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
 	arma::uword selected_cluster = centroids.index_min();
 	float intersection_distance = centroids[selected_cluster];
 	arma::uvec selected_positions = arma::find(assignments == selected_cluster);
+	arma::uvec selected_indices = hint_indices(selected_positions);
+	
+	// For now, don’t keep the intersection if it is only given by traffic signs, too unreliable
+	bool all_trafficsigns = true;
+	selected_indices.for_each([&](arma::uvec::elem_type& index) {
+		all_trafficsigns &= m_intersection_hints[index].category == IntersectionHint::Category::TrafficSign;
+	});
+	if (all_trafficsigns)
+		return {-1, Direction::None};
+
+	// Only keep the intersection if the combined hints give a high enough confidence
+	std::vector<float> confidences;
+	selected_indices.for_each([&](arma::uvec::elem_type& index) {
+		confidences.insert(confidences.end(), m_intersection_hints[index].confidences.begin(), m_intersection_hints[index].confidences.end());
+	});
+	float confidence = confidence_combination(confidences);
+	if (confidence < config::intersection::min_confidence)
+		return {-1, Direction::None};
+
 	Direction intersection_directions = Direction::All;
-	arma::unique(hint_indices(selected_positions)).eval().for_each([&] (int const& hint_index) {
+	arma::unique(selected_indices).eval().for_each([&] (int const& hint_index) {
 		intersection_directions &= m_intersection_hints[hint_index].direction_hint();
 	});
 
@@ -163,5 +205,14 @@ std::tuple<float, Direction> TrajectoryExtractorNode::next_intersection(ros::Tim
 		                             (negative if the vehicle is already farther than `m_rejoin_distance`) */
 float TrajectoryExtractorNode::distance_until_rejoin(ros::Time image_timestamp) {
 	auto [transform, distance] = get_map_transforms(m_last_mode_switch, image_timestamp);
-	return m_rejoin_distance - distance;
+	if (m_navigation_mode == NavigationMode::IntersectionForward) {
+		return m_rejoin_distance - distance;
+	} else if (m_navigation_mode == NavigationMode::IntersectionLeft || m_navigation_mode == NavigationMode::IntersectionRight) {
+		// Check the angle change relative to the target 90° angle
+		float angle = transform_to_sXYZ_euler(transform)[2];
+		if (std::abs(angle) > 0.8f * (M_PI / 2.0f))
+			return -1;  // FIXME ? Actually the rest just needs to know if the distance is passed or not
+		else
+			return 1;
+	}
 }

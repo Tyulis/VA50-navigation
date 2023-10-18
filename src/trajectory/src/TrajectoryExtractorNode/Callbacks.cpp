@@ -23,6 +23,12 @@ static constexpr frozen::unordered_set<frozen::string, 9> INTERSECTION_SIGNS = {
 	"keep-right", "keep-left",
 };
 
+static constexpr frozen::unordered_set<frozen::string, 7> TURN_SIGNS = {
+	"right-only", "left-only", "ahead-only",
+	"straight-right-only", "straight-left-only",
+	"keep-right", "keep-left",
+};
+
 
 /** Callback called when an image is published from the camera
   * - message : sensor_msgs::Image : Message from the camera */
@@ -107,6 +113,7 @@ void TrajectoryExtractorNode::callback_direction(std_msgs::UInt8::ConstPtr const
   * - message : trafficsigns::TrafficSignStatus : Message with the detected traffic signs data */
 void TrajectoryExtractorNode::callback_trafficsigns(trafficsigns::TrafficSignStatus::ConstPtr const& message) {
 	for (auto it = message->traffic_signs.begin(); it != message->traffic_signs.end(); it++) {
+		// FIXME : The python version uses TURN_SIGNS ...?
 		if (INTERSECTION_SIGNS.contains(frozen::string(it->type)) && it->confidence > config::intersection::confidence_threshold::trafficsign) {
 			arma::fvec position = {it->x, it->y, it->z};
 			IntersectionHint hint(IntersectionHint::Category::TrafficSign, it->type, position, message->header.stamp, it->confidence);
@@ -192,7 +199,28 @@ void TrajectoryExtractorNode::extract_trajectory(cv::Mat& image, ros::Time times
 			}
 		}
 
-		std::vector<DiscreteCurve> lines = filter_lines(branches, scale_factor);
+		std::vector<DiscreteCurve> filtered_lines = filter_lines(branches, scale_factor);
+
+		// Flip the lines so that they start at the bottom of the image, and convert them to metric
+		std::vector<DiscreteCurve> lines;
+		std::vector<DiscreteCurve> transverse_lines;
+		for (auto it = filtered_lines.begin(); it != filtered_lines.end(); it++) {
+			arma::fmat gradient = it->gradient();
+			arma::frowvec angles = arma::atan2(gradient.row(1), gradient.row(0));
+			if (arma::all(((      -config::markings::transverse_angle < angles) && (angles <        config::markings::transverse_angle)) ||
+			               ((M_PI -config::markings::transverse_angle < angles) && (angles < M_PI + config::markings::transverse_angle)))) {
+				transverse_lines.push_back(*it);
+			// Inverted because before birdeye_to_target, the y axis is flipped
+			} else if (it->curve(1, 0) < it->curve(1, it->size() - 1)) {
+				it->curve = birdeye_to_target_config(arma::fliplr(std::move(it->curve)));
+				lines.push_back(*it);
+			} else {
+				it->curve = birdeye_to_target_config(std::move(it->curve));
+				lines.push_back(*it);
+			}
+		}
+
+		// Detect the current lane
 		auto [left_line, right_line] = detect_lane(lines, scale_factor, timestamp, markings);
 		
 		// In intersection mode, if a new full lane has been found, catch it and go back to cruise 
@@ -207,7 +235,7 @@ void TrajectoryExtractorNode::extract_trajectory(cv::Mat& image, ros::Time times
 		}
 
 		// In cruise mode, update the trajectory, intersection status, and publish if there is something to publish
-		// Do NOT refactor this into an `else`, it must also be done when the vehicle just got out of intersection mode
+		// Do NOT refactor this into an `else`, it must also be done when the vehicle just got out of intersection mode (`switch_cruise` above)
 		if (m_navigation_mode == NavigationMode::Cruise) {
 			compile_trajectory(timestamp, left_line, right_line, trajectory_viz);
 
@@ -234,7 +262,7 @@ void TrajectoryExtractorNode::extract_trajectory(cv::Mat& image, ros::Time times
   * - image_timestamp    : ros::Time              : Timestamp to visualize at
   * - remaining_distance : float                  : Distance until reaching the rejoin distance */
 void TrajectoryExtractorNode::viz_intersection_mode(cv::Mat& viz, float scale_factor, ros::Time image_timestamp, float remaining_distance) {
-	arma::fmat transform = get_map_transforms(m_current_trajectory.timestamp, image_timestamp);
+	auto [transform, distance] = get_map_transforms(m_current_trajectory.timestamp, image_timestamp);
 	arma::fmat local_trajectory = transform_2d(transform, m_current_trajectory.curve);
 	arma::imat viz_trajectory = target_to_birdeye_config(local_trajectory);
 

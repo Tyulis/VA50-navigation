@@ -61,8 +61,8 @@ std::tuple<arma::fcube, arma::frowvec> TrajectoryExtractorNode::get_map_transfor
 	// Build the request to the transform service, see transformtrack/srv/TransformBatch.srv and transformtrack/msg/TimeBatch.msg for info
 	transformtrack::TransformBatch::Request request;
 	transformtrack::TransformBatch::Response response;
-	request.timestamps.start_times = start_times;
-	request.timestamps.end_time = end_time;
+	request.start_times = start_times;
+	request.end_time = end_time;
 	
 	// Now send the request and get the response
 	// We use persistent connections to improve efficiency, and ROS advises to implement some reconnection logic
@@ -83,7 +83,7 @@ std::tuple<arma::fcube, arma::frowvec> TrajectoryExtractorNode::get_map_transfor
 		
 		if (tries >= 10) {
 			ROS_ERROR("Connection to service %s failed %d times, skipping", config::node::transform_service_name, tries);
-			return arma::fcube();
+			return {arma::fcube(), arma::frowvec()};
 		}
 
 		// Try to reconnect
@@ -95,16 +95,16 @@ std::tuple<arma::fcube, arma::frowvec> TrajectoryExtractorNode::get_map_transfor
 	// The call was successful, get the transforms in the right format and return
 	// FIXME : This is for compatibility with the former Python interface
 	arma::dcube transforms64(response.transforms.data.data(), response.transforms.layout.dim[2].size, response.transforms.layout.dim[1].size, response.transforms.layout.dim[0].size, false);
-	arma::fcube transforms(transforms64);
-	arma::frowvec distances(response.distances);
-	return transforms, distances;
+	arma::fcube transforms = arma::conv_to<arma::fcube>::from(transforms64);
+	arma::frowvec distances = arma::conv_to<arma::frowvec>::from(response.distances);
+	return {transforms, distances};
 }
 
 /** Convenience wrapper for get_map_transforms with a single start timestamp */
 std::tuple<arma::fmat, float> TrajectoryExtractorNode::get_map_transforms(ros::Time start_time, ros::Time end_time) {
 	std::vector<ros::Time> start_times = {start_time};
 	auto [transforms, distances] =  get_map_transforms(start_times, end_time);
-	return transforms.slice(0), distances(0);
+	return {transforms.slice(0), distances(0)};
 }
 
 /** Call the DropVelocity service, such that the TransformBatch service discards its old velocity data

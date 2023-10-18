@@ -23,6 +23,11 @@ class Direction {
 		inline constexpr Direction(_Value value) : m_value(value) {}
 		inline constexpr Direction(int value) : m_value(static_cast<_Value>(value)) {}
 
+		inline constexpr bool is_single_direction() {
+			int flags = (int) m_value;
+			return (flags & (flags - 1) == 0) && flags != 0;  // Check if it is a power of two = pure direction
+		}
+
 		inline constexpr bool operator==(Direction b) { return m_value == b.m_value; }
 		inline constexpr bool operator!=(Direction b) { return m_value != b.m_value; }
 		inline constexpr bool operator==(_Value b) { return m_value == b; }

@@ -287,7 +287,15 @@ inline std::vector<DiscreteCurve> transform_positions(arma::fcube const& transfo
 	return transformed;
 }
 
+/** Transform the curve by the corresponding affine matrix in `transform`
+ *  - transforms : arma::fmat[4, 4] : Affine transform matrix
+ *  - curves     : DiscreteCurve    : Curve to transform
+ *  <------------- DiscreteCurve    : Transformed curve */
+inline DiscreteCurve transform_positions(arma::fmat const& transform, DiscreteCurve const& curve) {
+	return DiscreteCurve(affmul_plane(transform, curve.curve), curve.scores, curve.timestamp);
+}
 
+float mean_parallel_distance(DiscreteCurve const& curve1, DiscreteCurve const& curve2);
 DiscreteCurve compile_line(std::vector<DiscreteCurve> const& lines, float min_score, arma::fvec const& start_point, float trajectory_step);
 
 

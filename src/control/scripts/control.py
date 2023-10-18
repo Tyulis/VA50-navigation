@@ -161,17 +161,11 @@ class PurePursuitController (object):
             # Filter out traffic signs where a stop is not needed (we chosed to stop the car only for Yields and Stops)
             if sign.type in ('stop', 'yield', 'no-entry', 'light-red', 'light-orange'):
                 position = np.c_[[sign.x, sign.y, sign.z, 1]]
-<<<<<<< HEAD
-                transforms, _, _ = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
-                current_position = transforms[0] @ position
-                distance = np.linalg.norm(current_position[:2])
-=======
                 transforms, distances = self.get_map_transforms([data.header.stamp], rospy.get_rostime())
                 current_position = transforms[0] @ position
                 distance = max(0, current_position[1, 0] - (5 if sign.type in ("light-red", "light-orange") else 2))
                 if distance > self.parameters["control"]["brake-distance"]:
                     return
->>>>>>> main
 
                 self.is_stop_need = True
                 self.stop_type = 'light' if sign.type in ('light-red', 'light-orange') else 'sign'
@@ -180,21 +174,12 @@ class PurePursuitController (object):
                 self.current_stop_index = 0
 
             # Filter traffic signs where a direction is mandatory and publish on the direction topic
-<<<<<<< HEAD
-            elif sign.type in ('right-only', 'keep-right'):
-                self.direction_publisher.publish(0b0100)
-            elif sign.type in ('left-only', 'keep-left'):
-                self.direction_publisher.publish(0b0010)
-            elif sign.type == 'ahead-only':
-                self.direction_publisher.publish(0b0001)
-=======
             # elif sign.type in ('right-only', 'keep-right'):
             #    self.direction_publisher.publish(0b0100)
             # elif sign.type in ('left-only', 'keep-left'):
             #    self.direction_publisher.publish(0b0010)
             # elif sign.type == 'ahead-only':
             #    self.direction_publisher.publish(0b0001)
->>>>>>> main
             elif sign.type == 'light-green' and self.is_stop_need and self.stop_type == 'light':
                 self.is_stop_need = False
 

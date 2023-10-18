@@ -75,7 +75,7 @@ inline std::tuple<arma::fmat, arma::fmat> meshgrid(arma::fvec const& vector) {
 inline std::array<float, 3> transform_to_sXYZ_euler(arma::fmat const& transform) {
 	std::array<float, 3> angles;
 	
-	float cy = std::sqrtf(transform(0, 0)*transform(0, 0) + transform(1, 0)*transform(1, 0));
+	float cy = std::sqrt(transform(0, 0)*transform(0, 0) + transform(1, 0)*transform(1, 0));
 	if (cy > 0) {
         angles[0] = std::atan2( transform(2, 1), transform(2, 2));
         angles[1] = std::atan2(-transform(2, 0), cy);
