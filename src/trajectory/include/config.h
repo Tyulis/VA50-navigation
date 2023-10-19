@@ -80,7 +80,7 @@ namespace config {
 		constexpr float rejoin_factor = 0.8;
 		constexpr float min_turn_radius = 5.0;
 		constexpr float max_turn_radius = 25.0;
-		constexpr float default_turn_radius = 11.0;
+		constexpr float default_turn_radius = 12.0;
 		constexpr float hint_detection_buffer = 15.0;
 		constexpr float hint_clustering_distance = 2.0;
 		constexpr float hint_y_threshold = -4.0;

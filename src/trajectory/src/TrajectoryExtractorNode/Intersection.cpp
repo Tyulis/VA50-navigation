@@ -18,11 +18,22 @@ void TrajectoryExtractorNode::add_intersection_hint(IntersectionHint const& hint
 		return;
 	
 	// Skip hints found too close to the last intersection
-	if (m_last_lane_rejoin.isZero()) {
+	if (!m_last_lane_rejoin.isZero()) {
+		// Evaluate where the rejoined trajectory starts
+		float min_start_distance = INFINITY;
+		for (auto it = m_local_trajectory_history.begin(); it != m_local_trajectory_history.end(); it++) {
+			float trajectory_start_distance = arma::norm(it->curve.col(0));
+			if (it->curve(0, 1) < 0)
+				trajectory_start_distance = -trajectory_start_distance;
+
+			if (trajectory_start_distance < min_start_distance)
+				min_start_distance = trajectory_start_distance;
+		}
+
 		auto [transform, distance] = get_map_transforms(m_last_lane_rejoin, hint.timestamps.back());
 		
 		// Too close to the previous intersection, skip
-		if (distance < config::intersection::hint_detection_buffer)
+		if (distance < min_start_distance + config::intersection::hint_detection_buffer)
 			return;
 		// Now far enough, invalidate m_last_lane_rejoin to skip the transform service call next times
 		else

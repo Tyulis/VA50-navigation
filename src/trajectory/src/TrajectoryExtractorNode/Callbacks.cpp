@@ -161,6 +161,9 @@ void TrajectoryExtractorNode::extract_trajectory(cv::Mat& image, ros::Time times
 		return;
 	}
 
+	// Pull the trajectory history to the current local frame
+	m_local_trajectory_history = pull_trajectories(timestamp);
+
 	// Preprocess the image
 	auto [birdeye, be_binary, scale_factor] = preprocess_image(image, target_to_camera);
 

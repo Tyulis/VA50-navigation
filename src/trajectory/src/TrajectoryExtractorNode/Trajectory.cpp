@@ -8,6 +8,8 @@
   * - trajectory : DiscreteCurve : New trajectory, with scores and timestamp, to add to the buffer */
 void TrajectoryExtractorNode::add_local_trajectory(DiscreteCurve const& trajectory) {
 	m_trajectory_history.push_back(trajectory);
+	m_local_trajectory_history.push_back(trajectory);
+	
 	if (m_trajectory_history.size() > config::trajectory::history_size)
 		m_trajectory_history.erase(m_trajectory_history.begin(), m_trajectory_history.begin() + (m_trajectory_history.size() - config::trajectory::history_size));
 	
@@ -33,7 +35,7 @@ void TrajectoryExtractorNode::compile_trajectory(ros::Time timestamp, DiscreteCu
 	if (left_line.is_valid()) {
 		left_estimate = left_line;
 		left_estimate.dilate(config::environment::lane_width / 2, -1);
-		left_estimate.cut_angles(arma::datum::pi / 3);
+		left_estimate.trim_angles(arma::datum::pi / 3);
 
 		// Visualize the original line and the estimation
 		if (config::node::visualize) {
@@ -50,7 +52,7 @@ void TrajectoryExtractorNode::compile_trajectory(ros::Time timestamp, DiscreteCu
 	if (right_line.is_valid()) {
 		right_estimate = right_line;
 		right_estimate.dilate(config::environment::lane_width / 2, 1);
-		right_estimate.cut_angles(arma::datum::pi / 3);
+		right_estimate.trim_angles(arma::datum::pi / 3);
 
 		// Visualize the original line and the estimation
 		if (config::node::visualize) {
@@ -117,6 +119,9 @@ void TrajectoryExtractorNode::compile_trajectory(ros::Time timestamp, DiscreteCu
   * - timestamp : ros::Time                  : Timestamp at which to pull the trajectory history 
   * <------------ std::vector<DiscreteCurve> : Transformed trajectories */
 std::vector<DiscreteCurve> TrajectoryExtractorNode::pull_trajectories(ros::Time timestamp) {
+	if (m_trajectory_history.size() == 0)
+		return std::vector<DiscreteCurve>();
+
 	std::vector<ros::Time> trajectory_timestamps;
 	for (auto it = m_trajectory_history.begin() ; it != m_trajectory_history.end(); it++)
 		trajectory_timestamps.push_back(it->timestamp);
@@ -126,20 +131,16 @@ std::vector<DiscreteCurve> TrajectoryExtractorNode::pull_trajectories(ros::Time 
 }
 
 float TrajectoryExtractorNode::turn_radius(ros::Time timestamp, float intersection_distance) {
-	// Get the previously estimated trajectories, transform them into the local frame,
-	// and keep only the parts that are within the intersection
-	// Then get their mean curvature, that is used afterwards to estimate the turn curvature
-	std::vector<DiscreteCurve> trajectories = pull_trajectories(timestamp);
+	// Get the previously estimated trajectories,
+	// keep only the parts that are within the intersection,
+	// then get their mean curvature, that is used afterwards to estimate the turn curvature
 
 	// Take the mean of the curvatures
-	arma::fvec curvatures(trajectories.size());
-	for (int i = 0; i < trajectories.size(); i++) {
-		arma::fmat curve = trajectories[i].curve;
-		arma::fmat cut_curve = curve.cols(arma::find(curve.row(1) > intersection_distance));
-		curvatures(i) = mean_curvature(cut_curve);
-		curve.print();
-		cut_curve.print();
-		std::cout << "Curvature : " << curvatures(i) << std::endl;
+	arma::fvec curvatures(m_local_trajectory_history.size());
+	for (int i = 0; i < m_local_trajectory_history.size(); i++) {
+		DiscreteCurve cut_curve(m_local_trajectory_history[i].curve.cols(arma::find(m_local_trajectory_history[i].curve.row(1) > intersection_distance)));
+		cut_curve.trim_angles(arma::datum::pi / 4);
+		curvatures(i) = mean_curvature(cut_curve.curve);
 	}
 
 	// The curvature is in rad/m, take its inverse to get the curvature radius
@@ -172,10 +173,10 @@ void TrajectoryExtractorNode::build_intersection_forward_trajectory(ros::Time im
 	m_rejoin_distance = config::intersection::default_rejoin_distance;
 
 	// Cut the currently recorded trajectories at the intersection
-	std::vector<DiscreteCurve> trajectories = pull_trajectories(image_timestamp);
-	for (auto it = trajectories.begin(); it != trajectories.end(); it++) {
-		arma::uvec filter = arma::find(it->curve.row(1) >= intersection_distance);
-		it->curve.shed_cols(filter);
+	std::vector<DiscreteCurve> trajectories;
+	for (auto it = m_local_trajectory_history.begin(); it != m_local_trajectory_history.end(); it++) {
+		arma::uvec filter = arma::find(it->curve.row(1) < intersection_distance);
+		trajectories.emplace_back(it->curve.cols(filter));
 	}
 
 	// Find the angle of the trajectory to generate
@@ -225,6 +226,7 @@ void TrajectoryExtractorNode::build_intersection_left_trajectory(ros::Time image
   * - intersection_distance : float     : Distance remaining until the intersection (most likely negative, the vehicle is already on the intersection) */
 void TrajectoryExtractorNode::build_intersection_right_trajectory(ros::Time image_timestamp, float intersection_distance) {
 	float trajectory_radius = turn_radius(image_timestamp, intersection_distance);	
+	ROS_INFO("Turn radius : %.3f", trajectory_radius);
 
 	// Compute the trajectory as a quarter circle to the right with that radius
 	float angle_step = config::trajectory::trajectory_step / trajectory_radius;
@@ -241,12 +243,9 @@ void TrajectoryExtractorNode::build_intersection_right_trajectory(ros::Time imag
 /** Update the current trajectory to the given timestamp, using the trajectory history buffers
   * - target_timestamp : ros::Time : Timestamp for which the final trajectory must be estimated */
 void TrajectoryExtractorNode::update_trajectory(ros::Time timestamp, cv::Mat& viz) {
-	// Transform the trajectory buffer to the local frame
-	std::vector<DiscreteCurve> trajectories = pull_trajectories(timestamp);
-
 	// Visualization of per-frame trajectories
 	if (config::node::visualize) {
-		for (auto it = trajectories.begin(); it != trajectories.end(); it++) {
+		for (auto it = m_local_trajectory_history.begin(); it != m_local_trajectory_history.end(); it++) {
 			std::vector<cv::Point> viz_points = arma::conv_to<std::vector<cv::Point>>::from(target_to_birdeye_config(it->curve));
 			for (int i = 0; i < viz_points.size(); i++)
 				cv::drawMarker(viz, viz_points[i], cv::Scalar(150, 255, int(it->scores(i) * 255)), cv::MARKER_CROSS, 4);  // Purple
@@ -255,7 +254,7 @@ void TrajectoryExtractorNode::update_trajectory(ros::Time timestamp, cv::Mat& vi
 
 	// Compile a global trajectory from the local per-frame ones
 	arma::fvec start_point = {0, config::trajectory::trajectory_start};
-	DiscreteCurve compiled_trajectory = compile_line(trajectories, config::trajectory::trajectory_score_threshold, start_point, config::trajectory::trajectory_step);
+	DiscreteCurve compiled_trajectory = compile_line(m_local_trajectory_history, config::trajectory::trajectory_score_threshold, start_point, config::trajectory::trajectory_step);
 
 	// Failure : make the current trajectory invalid
 	if (!compiled_trajectory.is_valid() || compiled_trajectory.size() <= 3) {
@@ -263,7 +262,7 @@ void TrajectoryExtractorNode::update_trajectory(ros::Time timestamp, cv::Mat& vi
 		return;
 	}
 
-	compiled_trajectory.cut_angles(arma::datum::pi / 2);
+	compiled_trajectory.trim_angles(arma::datum::pi / 2);
 	compiled_trajectory.savgol_filter(7);
 	compiled_trajectory.timestamp = timestamp;
 

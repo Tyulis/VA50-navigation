@@ -120,6 +120,7 @@ class TrajectoryExtractorNode {
 
 		// Trajectory buffers
 		std::vector<DiscreteCurve> m_trajectory_history;
+		std::vector<DiscreteCurve> m_local_trajectory_history;
 		DiscreteCurve m_current_trajectory;
 		int m_trajectory_seq;
 

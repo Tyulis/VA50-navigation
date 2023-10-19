@@ -260,7 +260,7 @@ struct DiscreteCurve {
 
 	/** Cut out the points that make too sharp angles in the curve
 	   - max_angle : double       : Cut angles that are sharper than this (so, lower angle value), in radians */
-	inline void cut_angles(float max_angle) {
+	inline void trim_angles(float max_angle) {
 		arma::fmat vectors = arma::diff(curve, 1, 1);
 		arma::frowvec angles(curve.n_cols - 2);
 		for (int i = 0; i < vectors.n_cols - 1; i++)

@@ -79,8 +79,8 @@ intersection:
   rejoin-factor: 0.8                                       # Proportion of the theoretical distance to start looking for a lane to rejoin
   min-turn-radius: 5.0                                     # Clamp the turn radii between those two, in meters
   max-turn-radius: 25.0                                    # /
-  default-turn-radius: 11.0                                # Default turn radius in case there is no curvature information
-  hint-detection-buffer: 15.0                              # Halt detection of intersection hints for this distance after rejoining a line, to avoid getting caught in the previous intersection hints
+  default-turn-radius: 12.0                                # Default turn radius in case there is no curvature information
+  hint-detection-buffer: 5.0                              # Halt detection of intersection hints for this distance after rejoining a lane, to avoid getting caught in the previous intersection hints
   hint-clustering-distance: 2.0                            # Epsilon distance for final hint clustering 
   hint-y-threshold: -4.0                                   # Only use hints beyond this Y coordinate relative to the vehicle when looking for the next intersection
   min-confidence: 0.9                                      # Don’t switch to intersection mode if the hints have less confidence than this
