@@ -18,7 +18,7 @@ std::tuple<cv::Mat, cv::Mat, float> TrajectoryExtractorNode::preprocess_image(cv
 	cv::cvtColor(image, gray_image, cv::COLOR_RGB2GRAY);
 	
 	// First a gaussian blur is applied to reduce noise (in-place)
-	cv::GaussianBlur(gray_image, gray_image, cv::Size(7, 7), 1.5);
+	// cv::GaussianBlur(gray_image, gray_image, cv::Size(7, 7), 1.5);
 
 	// Project to bird-eye view
 	auto [birdeye, scale_factor] = fish2bird::to_birdeye(gray_image, m_camera_to_image, target_to_camera, m_distortion_xi,
@@ -28,7 +28,7 @@ std::tuple<cv::Mat, cv::Mat, float> TrajectoryExtractorNode::preprocess_image(cv
 	// Gaussian adaptive thresholding to reduce the influence of lighting changes
 	cv::Mat be_binary(birdeye.rows, birdeye.cols, CV_8U);
 	cv::adaptiveThreshold(birdeye, be_binary, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY, config::preprocess::threshold_window, config::preprocess::threshold_bias);
-	cv::imwrite("threshold.png", be_binary);
+	// cv::imwrite("threshold.png", be_binary);
 
 	// The adaptive binarization makes the borders white, mask them out
 	cv::Mat mask(birdeye.rows, birdeye.cols, CV_8U);
@@ -36,6 +36,14 @@ std::tuple<cv::Mat, cv::Mat, float> TrajectoryExtractorNode::preprocess_image(cv
 	cv::threshold(birdeye, mask, 0, 255, cv::THRESH_BINARY);
 	cv::erode(mask, mask, mask_kernel);
 	cv::bitwise_and(be_binary, mask, be_binary);
+
+	// Binarize the image relative to an ambiance map based upon a median filter
+	// cv::Mat ambiance(birdeye.rows, birdeye.cols, CV_8U);
+	// cv::medianBlur(birdeye, ambiance, config::preprocess::ambiance_filter_size);
+	// ambiance *= config::preprocess::ambiance_bias;
+
+	// cv::Mat be_binary(birdeye.rows, birdeye.cols, CV_8U);
+	// cv::compare(birdeye, ambiance, be_binary, cv::CMP_GT);
 
 	// Apply an opening operation to eliminate a few artifacts and better separate blurry markings
 	cv::Mat open_kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(config::preprocess::open_kernel_size, config::preprocess::open_kernel_size));

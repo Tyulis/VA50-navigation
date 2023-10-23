@@ -183,7 +183,7 @@ void TrajectoryExtractorNode::extract_trajectory(cv::Mat& image, ros::Time times
 	bool must_build_trajectory = !m_navigation_mode.is_panic();
 	if (m_navigation_mode.is_intersection()) {
 		remaining_distance = distance_until_rejoin(timestamp);
-		must_build_trajectory = remaining_distance <= 0;
+		must_build_trajectory &= remaining_distance <= 0;
 		if (remaining_distance > 0) {
 			ROS_INFO("Waiting for rejoin, %f meters remaining", remaining_distance);
 			viz_intersection_mode(trajectory_viz, scale_factor, timestamp, remaining_distance);

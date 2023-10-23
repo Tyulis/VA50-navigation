@@ -241,7 +241,8 @@ catkin_add_gtest(${PROJECT_NAME}-test
   test/testref_curvature.cpp
 
   src/LineDetection.cpp
-  src/FuzzyLaneSystem.cpp)
+  src/FuzzyLaneSystem.cpp
+)
 if(TARGET ${PROJECT_NAME}-test)
   target_link_libraries(${PROJECT_NAME}-test
     ${catkin_LIBRARIES}

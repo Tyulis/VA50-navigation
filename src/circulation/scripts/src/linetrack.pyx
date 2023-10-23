@@ -301,7 +301,7 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 	# Normalize it such that its sum is 1
 	for j in range(filter_size):
 		gaussian_filter[j] /= gaussian_weight
-	
+		
 	# Now loop on the curve, computing the pointwise curvature, filtering it, and splitting the curve when necessary
 	section_start = 0  # Start index of the section (first index to have a low enough curvature)
 	section_end = 0    # End index of the section (first index to have a curvature too high)
@@ -318,6 +318,8 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		# Now, the curvature is the difference in angle between those two vectors, divided by the local mean length of a discrete curve segment
 		curvature = _acos_clip((prev_vector_x*next_vector_x + prev_vector_y*next_vector_y) / (prev_vector_norm * next_vector_norm)) / ((prev_vector_norm + next_vector_norm) / 2)
 		
+		#print(curvature, end=" ")
+
 		# At first, initialize the buffer with this curvature value all over
 		if i == 1:
 			for j in range(filter_size):
@@ -334,7 +336,6 @@ cpdef list cut_line_angles(line, int filter_size, double filter_deviation, int m
 		for j in range(filter_size):
 			smooth_curvature += gaussian_filter[j]*curvature_buffer[(curvature_index - (filter_size - j - 1)) % filter_size]
 		
-		print(smooth_curvature)
 		# Increment-and-cycle-back the index in the queue buffer for next time
 		curvature_index = (curvature_index + 1) % filter_size
 

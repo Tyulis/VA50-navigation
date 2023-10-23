@@ -3,7 +3,7 @@
 #include <vector>
 #include <armadillo>
 
-constexpr float _main_angle = 1.3021580052236297;
+constexpr float _main_angle = 1.2997412908266983;
 std::vector<arma::fmat> get_testref_filtered_target();
 
 #endif

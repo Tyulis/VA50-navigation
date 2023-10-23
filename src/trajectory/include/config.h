@@ -55,6 +55,8 @@ namespace config {
 		constexpr int threshold_bias = -5;
 		constexpr int open_kernel_size = 4;
 		constexpr int close_kernel_size = 5;
+		constexpr int ambiance_filter_size = 51;
+		constexpr float ambiance_bias = 1.25;
 	}
 	namespace markings {
 		constexpr float size_tolerance = 0.2;
@@ -81,7 +83,7 @@ namespace config {
 		constexpr float min_turn_radius = 5.0;
 		constexpr float max_turn_radius = 25.0;
 		constexpr float default_turn_radius = 12.0;
-		constexpr float hint_detection_buffer = 15.0;
+		constexpr float hint_detection_buffer = 5.0;
 		constexpr float hint_clustering_distance = 2.0;
 		constexpr float hint_y_threshold = -4.0;
 		constexpr float min_confidence = 0.9;

@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
+#include "ros/ros.h"
 
 #include "test_DiscreteCurve.hpp"
 #include "test_LineDetection.hpp"
 #include "test_FuzzyLanes.hpp"
+#include "test_Utility.hpp"
 
 
 // Run all the tests that were declared with TEST()

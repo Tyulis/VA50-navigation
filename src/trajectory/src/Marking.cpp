@@ -129,7 +129,8 @@ void detect_crosswalks(std::vector<Marking>& markings, std::vector<DiscreteCurve
 		arma::uvec cluster_indices = arma::find(assignments == cluster);
 		int num_bands = cluster_indices.n_elem;
 
-		Marking marking(Marking::Type::Crosswalk, 2, 4, num_bands);
+		// FIXME : For the moment, confidence just depends on the amount of bands detected
+		Marking marking(Marking::Type::Crosswalk, std::min(1.0f, (float)cluster_indices.n_elem / 6), 2, 4, num_bands);
 		for (int i = 0; i < cluster_indices.n_elem; i++) {
 			int band_index = cluster_indices(i);
 			int global_index = band_indices[band_index];

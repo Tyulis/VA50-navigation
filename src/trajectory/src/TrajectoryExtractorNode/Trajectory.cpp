@@ -205,12 +205,12 @@ void TrajectoryExtractorNode::build_intersection_left_trajectory(ros::Time image
 	arma::frowvec angles = arma::regspace<arma::frowvec>(0, angle_step, arma::datum::pi / 2);
 	
 	float init_distance = ((m_next_double_lane)? 1.75f : 1.0f) * config::environment::lane_width;
-	int init_steps = std::floor(init_distance / config::trajectory::trajectory_step);
+	int init_steps = 1 + std::floor(init_distance / config::trajectory::trajectory_step);
 
 	arma::fmat curve(2, angles.n_elem + init_steps);
 	if (init_steps > 0) {
 		curve.submat(0, 0, 0, init_steps - 1).fill(0.0f);
-		curve.submat(1, 0, 1, init_steps - 1) = arma::regspace<arma::fmat>(0, init_distance, config::trajectory::trajectory_step);
+		curve.submat(1, 0, 1, init_steps - 1) = arma::regspace<arma::frowvec>(0, config::trajectory::trajectory_step, init_distance);
 	}
 
 	curve.submat(0, init_steps, 0, curve.n_cols - 1) = trajectory_radius * (arma::cos(angles) - 1);

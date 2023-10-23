@@ -55,6 +55,8 @@ preprocess:
   threshold-bias: -5                                       # Bias on the adaptive threshold
   open-kernel-size: 4                                      # Size of the opening operation kernel in pixels
   close-kernel-size: 5                                     # Size of the closing operation kernel in pixels
+  ambiance-filter-size: 51                                 # Size of the median filter to use to compute the ambiance map
+  ambiance-bias: 1.25                                      # Keep the pixels above (ambiance × bias)
 
 # Road markings detection parameters
 markings:
